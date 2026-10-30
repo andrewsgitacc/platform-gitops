@@ -10,12 +10,13 @@
 #   values.yaml  - Helm values
 #   manifests/   - extra resources applied after the chart (pools, issuers, gateways...)
 #
-# From Phase 3, Argo CD installs the same components from the same files and this
-# script is only needed to bootstrap Argo CD itself.
+# From Phase 3, Argo CD installs the same components from the same files (see argocd/
+# and bootstrap/). This script is then only needed to bootstrap a fresh cluster:
+# run it once for everything, then apply bootstrap/root.yaml and Argo CD takes over.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ORDER=(metallb cert-manager envoy-gateway external-dns)
+ORDER=(metallb cert-manager envoy-gateway external-dns argocd)
 
 log() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 
@@ -41,6 +42,7 @@ install_chart() {
 apply_manifests() {
   local dir="$1/manifests"
   [[ -d "$dir" ]] || return 0
+  compgen -G "$dir/*.yaml" >/dev/null || return 0   # nothing to apply
   log "kubectl apply: ${dir#"$ROOT"/}"
   # Admission webhooks can take a few seconds to start answering after a fresh install.
   for attempt in $(seq 1 12); do
@@ -60,6 +62,9 @@ post_checks() {
       echo "Gateway address: $(kubectl -n envoy-gateway-system get gateway lab-gateway -o jsonpath='{.status.addresses[0].value}')" ;;
     external-dns)
       kubectl -n external-dns rollout status deployment/external-dns --timeout=120s ;;
+    argocd)
+      kubectl -n argocd rollout status deployment/argocd-server --timeout=300s
+      echo "Argo CD admin password: kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo" ;;
   esac
 }
 

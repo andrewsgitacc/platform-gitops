@@ -1,0 +1,43 @@
+# One Argo CD Application per workload in apps/<name>/ (plain manifests),
+# deployed to the namespace <name>.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: apps
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: https://github.com/andrewsgitacc/platform-gitops.git
+        revision: main
+        directories:
+          - path: "apps/*"
+  template:
+    metadata:
+      name: "app-{{ .path.basename }}"
+      namespace: argocd
+      labels:
+        platform.lab/type: app
+    spec:
+      project: platform
+      source:
+        repoURL: https://github.com/andrewsgitacc/platform-gitops.git
+        targetRevision: main
+        path: "{{ .path.path }}"
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{ .path.basename }}"
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 15s
+            factor: 2
+            maxDuration: 3m

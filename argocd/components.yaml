@@ -1,0 +1,63 @@
+# One Argo CD Application per platform component: every components/<name>/chart.yaml
+# in this repo becomes an Application named <name>, built from three sources:
+#   1. the Helm chart at the pinned version in chart.yaml
+#   2. this repo, so the chart can use components/<name>/values.yaml
+#   3. components/<name>/manifests/ (extra resources: pools, issuers, gateway, routes...)
+#
+# Adding a component = adding a folder. Removing the folder removes the Application.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: components
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: https://github.com/andrewsgitacc/platform-gitops.git
+        revision: main
+        files:
+          - path: "components/*/chart.yaml"
+  template:
+    metadata:
+      name: "{{ .path.basename }}"
+      namespace: argocd
+      labels:
+        platform.lab/type: component
+    spec:
+      project: platform
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{ .namespace }}"
+      sources:
+        - repoURL: '{{ trimPrefix "oci://" .repo }}'
+          chart: "{{ .chart }}"
+          targetRevision: "{{ .version }}"
+          helm:
+            releaseName: "{{ .release }}"
+            valueFiles:
+              - "$values/{{ .path.path }}/values.yaml"
+        - repoURL: https://github.com/andrewsgitacc/platform-gitops.git
+          targetRevision: main
+          ref: values
+        - repoURL: https://github.com/andrewsgitacc/platform-gitops.git
+          targetRevision: main
+          path: "{{ .path.path }}/manifests"
+          directory:
+            include: "*.yaml"
+      syncPolicy:
+        automated:
+          prune: true       # remove resources deleted from Git
+          selfHeal: true    # undo manual changes made in the cluster
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true              # large CRDs (Envoy Gateway, cert-manager)
+          - SkipDryRunOnMissingResource=true  # resources whose CRD arrives in the same sync
+          - RespectIgnoreDifferences=true
+        retry:
+          limit: 10
+          backoff:
+            duration: 15s
+            factor: 2
+            maxDuration: 5m
