@@ -1,0 +1,3 @@
+crds:
+  enabled: true
+  keep: true   # don't delete CRDs (and every certificate) if the release is removed

@@ -1,0 +1,5 @@
+release: external-dns
+namespace: external-dns
+repo: https://kubernetes-sigs.github.io/external-dns/
+chart: external-dns
+version: 1.23.0

@@ -1,0 +1,42 @@
+# Internal lab certificate authority.
+#
+# 1. selfsigned-bootstrap creates the root CA certificate once.
+# 2. lab-ca issues certificates for the platform (e.g. *.apps.lab.local) from that root.
+#
+# The root CA's private key only exists as a Secret in the cluster (cert-manager/lab-root-ca).
+# It is never stored in Git. Its public certificate is exported and trusted on the Mac
+# (see README), so browsers accept the lab's HTTPS certificates.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned-bootstrap
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: lab-root-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: Lab Root CA
+  subject:
+    organizations: [andrewsgitacc labs]
+  secretName: lab-root-ca
+  duration: 87600h        # 10 years
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    kind: ClusterIssuer
+    name: selfsigned-bootstrap
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: lab-ca
+spec:
+  ca:
+    secretName: lab-root-ca   # read from the cert-manager namespace

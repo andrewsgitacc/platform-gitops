@@ -1,0 +1,78 @@
+# The lab's single entry point for web traffic.
+#
+#   https://<name>.apps.lab.local  ->  172.16.79.100 (MetalLB)  ->  Envoy  ->  HTTPRoute  ->  app
+#
+# Apps add an HTTPRoute for their hostname; external-dns then creates the DNS record
+# and the wildcard certificate below covers TLS.
+
+# Envoy proxy settings: pin the gateway's LoadBalancer IP to the first MetalLB address.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: lab-proxy
+  namespace: envoy-gateway-system
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        annotations:
+          metallb.io/loadBalancerIPs: 172.16.79.100
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: envoy-lab
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+  parametersRef:
+    group: gateway.envoyproxy.io
+    kind: EnvoyProxy
+    name: lab-proxy
+    namespace: envoy-gateway-system
+---
+# Wildcard certificate for every app under apps.lab.local, renewed automatically.
+# "server auth" is required: macOS and Chrome reject TLS certs without it.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: apps-wildcard
+  namespace: envoy-gateway-system
+spec:
+  secretName: apps-wildcard-tls
+  dnsNames:
+    - "*.apps.lab.local"
+    - apps.lab.local
+  duration: 2160h       # 90 days
+  renewBefore: 360h     # renew 15 days before expiry
+  usages:
+    - server auth
+    - digital signature
+    - key encipherment
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    kind: ClusterIssuer
+    name: lab-ca
+    group: cert-manager.io
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: lab-gateway
+  namespace: envoy-gateway-system
+spec:
+  gatewayClassName: envoy-lab
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: "*.apps.lab.local"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: apps-wildcard-tls
+      allowedRoutes:
+        namespaces:
+          from: All   # apps in any namespace can attach routes
