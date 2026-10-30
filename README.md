@@ -54,10 +54,10 @@ Nothing secret is stored in this repo.
 - **Lab root CA private key**: generated inside the cluster by cert-manager and only exists
   as the Secret `cert-manager/lab-root-ca`. Only the public certificate is exported.
 
-> **Lab only:** trusting a home-made root CA on your Mac is normal for a private lab, but
-> anyone holding that CA's private key could create certificates your Mac trusts for any
-> website. Keep the key in the cluster, and remove the CA from the Mac's keychain if you
-> tear the lab down (see below).
+> **The Mac does not trust the lab CA** (by choice): Mac `curl` commands use `-k` and
+> browsers show a warning. Trusting it is optional (runbook step 2). If you do, keep in
+> mind that anyone holding the CA's private key could create certificates your Mac trusts
+> for any website, which is why the key never leaves the cluster.
 
 ## Phase 2 runbook
 
@@ -99,7 +99,7 @@ YAML
 kubectl get svc lb-test          # EXTERNAL-IP 172.16.79.119
 ```
 
-*Mac:* `curl -s http://172.16.79.119 | head -4` shows the nginx welcome page.
+*Mac:* `curl -s -m 5 http://172.16.79.119 | head -4` shows the nginx welcome page (plain HTTP, so no `-k` needed).
 Then clean up: `kubectl delete deployment,svc lb-test`
 
 > If the curl from the Mac times out, stop here and report it: it means Fusion's NAT
@@ -113,17 +113,25 @@ Then clean up: `kubectl delete deployment,svc lb-test`
 ./scripts/export-lab-ca.sh       # trusts the CA here, writes ~/lab-root-ca.crt
 ```
 
-*Mac* — trust the lab CA (asks for your Mac password):
+The utility server now trusts the lab CA, so `curl` there verifies certificates normally.
+
+**The Mac does not trust the lab CA.** Mac `curl` commands use `-k` (skip certificate
+verification), and browsers show a certificate warning you click through. This keeps the
+Mac's trust store untouched.
+
+<details>
+<summary>Optional: trust the lab CA on the Mac instead</summary>
+
+Removes the browser warnings and the need for `-k` (asks for your Mac password):
 
 ```bash
 scp admin@172.16.79.10:lab-root-ca.crt ~/Downloads/
 sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ~/Downloads/lab-root-ca.crt
 ```
 
-Safari and Chrome use the macOS keychain. Firefox has its own store: enable
-`security.enterprise_roots.enabled` in `about:config`, or import the cert in its settings.
-
-To remove it later: `sudo security delete-certificate -c "Lab Root CA" /Library/Keychains/System.keychain`
+Safari and Chrome use the macOS keychain; Firefox has its own store. To remove it:
+`sudo security delete-certificate -c "Lab Root CA" /Library/Keychains/System.keychain`
+</details>
 
 ### 3. Envoy Gateway
 
@@ -148,8 +156,14 @@ dig +short hello.apps.lab.local                        # 172.16.79.100
 curl https://hello.apps.lab.local                      # JSON from podinfo, valid TLS (no -k)
 ```
 
-*Mac:* open **https://hello.apps.lab.local** — the podinfo page with a padlock and
-"Hello from the platform lab". (Needs `/etc/resolver/lab.local` from Phase 1.)
+*Mac* (needs `/etc/resolver/lab.local` from Phase 1):
+
+```bash
+curl -k https://hello.apps.lab.local                   # podinfo JSON (-k: lab CA not trusted on the Mac)
+```
+
+In the browser, **https://hello.apps.lab.local** shows a certificate warning (expected);
+click through to the podinfo page, "Hello from the platform lab".
 
 Check that external-dns cleans up after itself:
 
@@ -162,10 +176,10 @@ kubectl apply -f apps/hello/hello.yaml                 # put it back
 ### Phase 2 done when
 
 - [ ] Mac reaches a MetalLB IP (172.16.79.119 test)
-- [ ] `lab-root-ca` Ready and trusted on the Mac
+- [ ] `lab-root-ca` Ready and trusted on the utility server
 - [ ] `lab-gateway` Programmed on 172.16.79.100
 - [ ] `hello.apps.lab.local` record created and removed automatically by external-dns
-- [ ] https://hello.apps.lab.local opens in the Mac browser with a valid certificate
+- [ ] `curl -k https://hello.apps.lab.local` works from the Mac
 - [ ] `validate` GitHub Actions check green
 
 ## Troubleshooting
@@ -176,4 +190,5 @@ kubectl apply -f apps/hello/hello.yaml                 # put it back
 | Certificate not Ready | `kubectl describe certificate -A`, `kubectl get certificaterequests -A` |
 | Gateway not Programmed | `kubectl -n envoy-gateway-system describe gateway lab-gateway` |
 | No DNS record | `kubectl -n external-dns logs deploy/external-dns`; on the DNS server `sudo journalctl -u named -n 50` |
-| Browser certificate warning | CA not trusted on the Mac (step 2), or the page was opened by IP instead of name |
+| Browser certificate warning | Expected: the lab CA isn't trusted on the Mac (optional in step 2) |
+| `curl` fails on the Mac with a certificate error | Add `-k`, or trust the CA on the Mac |

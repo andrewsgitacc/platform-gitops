@@ -13,7 +13,7 @@ sudo update-ca-trust
 echo "Trusted on $(hostname). Certificate written to $OUT"
 cat <<'MSG'
 
-On the Mac:
+Optional, on the Mac (otherwise use curl -k there):
   scp admin@172.16.79.10:lab-root-ca.crt ~/Downloads/
   sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ~/Downloads/lab-root-ca.crt
 MSG
