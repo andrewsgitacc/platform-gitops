@@ -1,0 +1,6 @@
+# Helm chart for this component (read by scripts/install.sh; Argo CD from Phase 3)
+release: metallb
+namespace: metallb-system
+repo: https://metallb.github.io/metallb
+chart: metallb
+version: 0.16.1

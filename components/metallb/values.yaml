@@ -1,0 +1,5 @@
+# MetalLB in L2 mode: gives LoadBalancer services a real IP on the Fusion NAT network.
+# BGP isn't used, so the frr-k8s backend (on by default in recent charts) is turned off
+# to save resources.
+frrk8s:
+  enabled: false

@@ -1,0 +1,61 @@
+# Test app for the Phase 2 foundation: https://hello.apps.lab.local
+# Exercises MetalLB, the gateway, the wildcard certificate and external-dns end to end.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hello
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podinfo
+  namespace: hello
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: podinfo}
+  template:
+    metadata:
+      labels: {app: podinfo}
+    spec:
+      containers:
+        - name: podinfo
+          image: ghcr.io/stefanprodan/podinfo:6.15.0
+          ports:
+            - containerPort: 9898
+          env:
+            - name: PODINFO_UI_MESSAGE
+              value: "Hello from the platform lab"
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          readinessProbe:
+            httpGet: {path: /readyz, port: 9898}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: podinfo
+  namespace: hello
+spec:
+  selector: {app: podinfo}
+  ports:
+    - port: 9898
+      targetPort: 9898
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: hello
+  namespace: hello
+spec:
+  parentRefs:
+    - name: lab-gateway
+      namespace: envoy-gateway-system
+      sectionName: https
+  hostnames:
+    - hello.apps.lab.local
+  rules:
+    - backendRefs:
+        - name: podinfo
+          port: 9898

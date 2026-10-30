@@ -1,0 +1,53 @@
+# Validate every platform component on pull requests and pushes to main:
+#  - render each Helm chart with its pinned version and values
+#  - schema-check the rendered charts and all plain manifests with kubeconform
+# Runs on GitHub-hosted runners; it never touches the lab.
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  KUBECONFORM_VERSION: v0.7.0
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kubeconform
+        run: |
+          curl -sSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | tar xz -C /usr/local/bin kubeconform
+          kubeconform -v
+
+      - name: Render Helm charts
+        run: |
+          set -euo pipefail
+          mkdir -p rendered
+          for dir in components/*/; do
+            c=$(basename "$dir")
+            repo=$(yq '.repo' "$dir/chart.yaml"); chart=$(yq '.chart' "$dir/chart.yaml")
+            version=$(yq '.version' "$dir/chart.yaml"); ns=$(yq '.namespace' "$dir/chart.yaml")
+            release=$(yq '.release' "$dir/chart.yaml")
+            if [[ "$repo" == oci://* ]]; then ref="$repo/$chart"; args=(); else ref="$chart"; args=(--repo "$repo"); fi
+            echo "::group::$c ($chart $version)"
+            helm template "$release" "$ref" "${args[@]}" --version "$version" \
+              --namespace "$ns" --values "$dir/values.yaml" > "rendered/$c.yaml"
+            echo "rendered $(grep -c '^kind:' "rendered/$c.yaml") resources"
+            echo "::endgroup::"
+          done
+
+      - name: kubeconform
+        run: |
+          kubeconform -strict -summary \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            -ignore-missing-schemas \
+            rendered/ components/*/manifests/ apps/
