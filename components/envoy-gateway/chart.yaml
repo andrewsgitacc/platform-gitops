@@ -1,6 +1,6 @@
 # Includes the Gateway API CRDs.
 release: eg
 namespace: envoy-gateway-system
-repo: oci://docker.io/envoyproxy
+repo: oci://registry-1.docker.io/envoyproxy   # Docker Hub OCI registry
 chart: gateway-helm
 version: v1.9.1

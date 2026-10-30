@@ -1,0 +1,17 @@
+# Argo CD project for everything in this repo.
+# Wide open for the lab; a real platform would restrict source repos and destinations.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: argocd
+spec:
+  description: Platform lab components and apps
+  sourceRepos:
+    - "*"
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: "*"
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"

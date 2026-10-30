@@ -1,0 +1,25 @@
+# The root "app of apps". Applied once by hand after Argo CD is installed:
+#
+#   kubectl apply -f bootstrap/root.yaml
+#
+# It syncs the argocd/ folder (project + ApplicationSets), which in turn create an
+# Application for every component and app in this repo - including Argo CD itself.
+# After this, every change to the cluster is a commit to main.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/andrewsgitacc/platform-gitops.git
+    targetRevision: main
+    path: argocd
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

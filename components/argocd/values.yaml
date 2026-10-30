@@ -1,0 +1,37 @@
+# Argo CD: deploys everything in this repo and manages itself (see argocd/ and bootstrap/).
+global:
+  domain: argocd.apps.lab.local
+
+configs:
+  params:
+    # TLS is terminated at lab-gateway (Envoy), which talks plain HTTP to argocd-server.
+    server.insecure: true
+
+  cm:
+    # Webhook/CRD CA bundles are injected at runtime (by cert-manager's cainjector,
+    # MetalLB, Envoy Gateway). They aren't in Git, so tell Argo CD not to treat them as drift.
+    resource.customizations.ignoreDifferences.admissionregistration.k8s.io_ValidatingWebhookConfiguration: |
+      jqPathExpressions:
+        - '.webhooks[]?.clientConfig.caBundle'
+    resource.customizations.ignoreDifferences.admissionregistration.k8s.io_MutatingWebhookConfiguration: |
+      jqPathExpressions:
+        - '.webhooks[]?.clientConfig.caBundle'
+    resource.customizations.ignoreDifferences.apiextensions.k8s.io_CustomResourceDefinition: |
+      jqPathExpressions:
+        - '.spec.conversion.webhook.clientConfig.caBundle'
+
+  # Envoy Gateway's chart is published as an OCI artifact; Argo CD needs the
+  # registry registered with OCI enabled (no credentials - it's public).
+  repositories:
+    envoyproxy-oci:
+      name: envoyproxy
+      url: registry-1.docker.io/envoyproxy
+      type: helm
+      enableOCI: "true"
+
+# Single sign-on comes from Keycloak in Phase 7; until then the built-in admin user.
+dex:
+  enabled: false
+
+notifications:
+  enabled: false
