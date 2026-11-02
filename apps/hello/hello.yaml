@@ -11,7 +11,7 @@ metadata:
   name: podinfo
   namespace: hello
 spec:
-  replicas: 2
+  replicas: 3
   selector:
     matchLabels: {app: podinfo}
   template:
