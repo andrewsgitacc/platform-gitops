@@ -528,7 +528,7 @@ kubectl apply -f apps/hello/hello.yaml                 # put it back
 | SealedSecret not turning into a Secret | `kubectl -n <ns> describe sealedsecret <name>` and `kubectl -n kube-system logs deploy/sealed-secrets-controller`. "no key could decrypt secret": sealed for another cluster/key - restore the key backup or re-seal. "already exists and is not managed by SealedSecret": annotate the Secret `sealedsecrets.bitnami.com/managed=true` |
 | Ceph OSD pods missing (no `rook-ceph-osd-N`) | `kubectl -n rook-ceph logs -l app=rook-ceph-osd-prepare --tail=50`. Usually the disk isn't empty (has a partition/filesystem) or isn't named `nvme0n2` on that node (`lsblk` on the worker) |
 | PVC stuck `Pending`, or pod can't mount a Ceph volume | `kubectl describe pvc <name>`; `kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph status`. "modprobe rbd" errors: run `labs/k8s/08_prepare_ceph_nodes.yml` |
-| `ceph status` HEALTH_WARN | `ceph health detail` in the tools pod. Clock skew: check chronyd on the workers. "too few PGs"/autoscale warnings settle on their own |
+| `ceph status` HEALTH_WARN (Argo CD shows `rook-ceph-cluster` Degraded) | `ceph health detail` in the tools pod. Clock skew: check chronyd on the workers. `TOO_MANY_PGS`: too many placement groups for 3 OSDs - don't mark pools `bulk`; the autoscaler shrinks them over ~30 min. `AUTH_INSECURE_*` (CSI keys use the older aes cipher): expected on kernel < 7.0, muted in `cephClusterSpec.healthCheck` with the reason |
 | Pods `OOMKilled` / `Pending` "Insufficient memory" after Ceph | Worker RAM is full: `kubectl top nodes`. Raise workers to 12 GB (labs/platform → MacBook requirements) |
 | `argocd: command not found` | Run the admin tools playbook (Phase 3 runbook step 1) and open a new SSH session |
 
