@@ -1,0 +1,11 @@
+# Sealed Secrets: encrypt Kubernetes Secrets so they can be stored in this (public) repo.
+# Only the controller in this cluster holds the private key that decrypts them.
+#
+# Name and namespace match kubeseal's defaults (sealed-secrets-controller in kube-system),
+# so kubeseal needs no extra flags.
+fullnameOverride: sealed-secrets-controller
+
+# LAB ONLY: don't generate a new sealing key every 30 days. With rotation off there is a
+# single key to back up (scripts/backup-sealing-key.sh). Real clusters keep rotation on
+# and back up the keys regularly.
+keyrenewperiod: "0"

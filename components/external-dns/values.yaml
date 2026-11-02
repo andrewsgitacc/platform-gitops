@@ -3,8 +3,8 @@
 provider:
   name: rfc2136
 
-# TSIG secret comes from a Kubernetes Secret, not Git
-# (created by scripts/create-external-dns-secret.sh; moved to Sealed Secrets in Phase 4).
+# TSIG secret: the Secret is created by the Sealed Secrets controller from the encrypted
+# manifests/tsig-sealedsecret.yaml (scripts/seal-external-dns-secret.sh).
 env:
   - name: EXTERNAL_DNS_RFC2136_TSIG_SECRET
     valueFrom:

@@ -34,6 +34,7 @@ scripts/           Bootstrap helpers, run on the utility server (dns.lab.local)
 | [cert-manager](components/cert-manager) | v1.21.2 | Internal lab CA (`lab-ca` ClusterIssuer) and automatic certificates |
 | [Envoy Gateway](components/envoy-gateway) | v1.9.1 | Kubernetes Gateway API. One gateway, `lab-gateway`, on **172.16.79.100**, HTTPS for `*.apps.lab.local` |
 | [external-dns](components/external-dns) | chart 1.23.0 | Creates `<name>.apps.lab.local` records on the lab BIND server for every HTTPRoute |
+| [Sealed Secrets](components/sealed-secrets) | chart 2.22.0 (v0.41.2) | Decrypts SealedSecrets from Git into Secrets; `kubeseal` on the utility server encrypts them |
 | [Argo CD](components/argocd) | chart 10.10.2 (v3.5.4) | GitOps: deploys this repo, including itself. UI at https://argocd.apps.lab.local |
 
 How Argo CD deploys this repo:
@@ -62,11 +63,17 @@ with a hostname under `apps.lab.local`. DNS and TLS are automatic.
 
 ## Secrets and keys
 
-Nothing secret is stored in this repo.
+No plain-text secrets are stored in this repo. Secrets are committed **encrypted** as
+SealedSecrets: only the Sealed Secrets controller in this cluster holds the private key that
+decrypts them, so they're safe in a public repo.
 
-- **external-dns TSIG key**: created as a Secret by `scripts/create-external-dns-secret.sh`,
-  straight from `/etc/named/externaldns.key` on the utility server. Phase 4 replaces this
-  with a SealedSecret.
+- **external-dns TSIG key**: `components/external-dns/manifests/tsig-sealedsecret.yaml`,
+  sealed by `scripts/seal-external-dns-secret.sh` from `/etc/named/externaldns.key` on the
+  utility server.
+- **Sealing key** (the controller's private key): exists only in the cluster
+  (`kube-system`, label `sealedsecrets.bitnami.com/sealed-secrets-key`) and in a backup made by
+  `scripts/backup-sealing-key.sh`, kept on the Mac in `~/lab-secrets/`, **never in Git**. Lose it
+  and every SealedSecret has to be re-sealed; leak it and anyone can decrypt them.
 - **Lab root CA private key**: generated inside the cluster by cert-manager and only exists
   as the Secret `cert-manager/lab-root-ca`. Only the public certificate is exported.
 
@@ -74,6 +81,87 @@ Nothing secret is stored in this repo.
 > browsers show a warning. Trusting it is optional (runbook step 2). If you do, keep in
 > mind that anyone holding the CA's private key could create certificates your Mac trusts
 > for any website, which is why the key never leaves the cluster.
+
+## Phase 4 runbook: Sealed Secrets
+
+Two pull requests: the first adds the controller (Argo CD installs it), the second adds the
+first sealed secret, which can only be made once the controller exists.
+Commands run on the **utility server** unless marked *Mac*.
+
+### 1. kubeseal on the utility server (*Mac*, labs repo)
+
+```bash
+cd ~/GitHub/labs && git checkout main && git pull
+cd admin && ansible-playbook -i admin_inventory.ini install_admin_tools.yml -k -K
+```
+
+### 2. Install the controller (PR 1)
+
+Merge the Phase 4 pull request in this repo (validate green). Within ~3 minutes Argo CD
+creates the `sealed-secrets` Application:
+
+```bash
+watch kubectl -n argocd get applications                     # sealed-secrets Synced + Healthy
+kubectl -n kube-system get pods -l app.kubernetes.io/name=sealed-secrets   # 1/1 Running
+kubeseal --fetch-cert | head -2                               # -----BEGIN CERTIFICATE-----
+```
+
+### 3. Back up the sealing key — do this now
+
+```bash
+cd ~/platform-gitops && git checkout main && git pull
+./scripts/backup-sealing-key.sh
+```
+
+*Mac:* keep the backup outside any Git repo:
+
+```bash
+mkdir -p ~/lab-secrets && chmod 700 ~/lab-secrets
+scp admin@172.16.79.10:sealed-secrets-key.yaml ~/lab-secrets/
+```
+
+### 4. Seal the external-dns key (PR 2)
+
+```bash
+./scripts/seal-external-dns-secret.sh
+```
+
+*Mac:* copy the encrypted file into the repo, commit, open a PR, merge:
+
+```bash
+cd ~/GitHub/platform-gitops && git checkout main && git pull
+git checkout -b external-dns-sealed-tsig
+scp admin@172.16.79.10:platform-gitops/components/external-dns/manifests/tsig-sealedsecret.yaml \
+  components/external-dns/manifests/
+git add components/external-dns/manifests/tsig-sealedsecret.yaml
+git commit -m "external-dns: TSIG key as a SealedSecret" && git push -u origin external-dns-sealed-tsig
+```
+
+After the merge (~3 minutes):
+
+```bash
+kubectl -n external-dns get sealedsecret external-dns-rfc2136     # SYNCED True
+kubectl -n external-dns get secret external-dns-rfc2136 -o jsonpath='{.metadata.ownerReferences[0].kind}'; echo   # SealedSecret
+```
+
+### 5. Test: the Secret comes back from Git
+
+```bash
+kubectl -n external-dns delete secret external-dns-rfc2136
+sleep 10; kubectl -n external-dns get secret external-dns-rfc2136   # recreated by the controller
+kubectl -n external-dns rollout restart deployment external-dns
+kubectl -n external-dns logs deploy/external-dns --tail=20          # no TSIG / auth errors
+dig +short hello.apps.lab.local                                     # still 172.16.79.100
+```
+
+*Mac:* `curl -k https://hello.apps.lab.local` still works.
+
+### Phase 4 done when
+
+- [ ] `sealed-secrets` Application Synced + Healthy, `kubeseal` works on the utility server
+- [ ] Sealing key backed up to `~/lab-secrets/` on the Mac
+- [ ] `tsig-sealedsecret.yaml` in Git; the Secret is owned by the SealedSecret
+- [ ] Deleting the Secret recreates it; external-dns keeps working
 
 ## Phase 3 runbook: Argo CD
 
@@ -173,9 +261,9 @@ argocd app get app-hello                        # Synced to the new commit
 
 ## Phase 2 runbook (history)
 
-How the Phase 2 components were first installed, before Argo CD. On a rebuilt cluster,
-`./scripts/install.sh` (all components) then `kubectl apply -f bootstrap/root.yaml`
-gets back to the same state.
+How the Phase 2 components were first installed, before Argo CD. To rebuild everything on
+a new cluster, see "Rebuilding the platform from scratch" in
+[labs/platform](https://github.com/andrewsgitacc/labs/tree/main/platform#rebuilding-the-platform-from-scratch).
 
 All commands run on the **utility server** unless marked *Mac*.
 
@@ -259,7 +347,7 @@ kubectl -n envoy-gateway-system get gateway lab-gateway   # ADDRESS 172.16.79.10
 ### 4. external-dns
 
 ```bash
-./scripts/create-external-dns-secret.sh
+./scripts/create-external-dns-secret.sh   # (replaced in Phase 4 by a SealedSecret in Git)
 ./scripts/install.sh external-dns
 ```
 
@@ -314,6 +402,7 @@ kubectl apply -f apps/hello/hello.yaml                 # put it back
 | `no route to host` to 172.16.79.100 (gateway) | The Envoy pods aren't running, so MetalLB stops announcing the IP. Check `kubectl -n envoy-gateway-system get pods`; if they're `Evicted`, the nodes are out of disk — see [Pods Evicted / DiskPressure](#pods-evicted--diskpressure) |
 | Pods `Evicted`, nodes tainted `disk-pressure` | See [Pods Evicted / DiskPressure](#pods-evicted--diskpressure) |
 | `argocd login` says "Invalid username or password" | See [Argo CD admin password](#argo-cd-admin-password) |
+| SealedSecret not turning into a Secret | `kubectl -n <ns> describe sealedsecret <name>` and `kubectl -n kube-system logs deploy/sealed-secrets-controller`. "no key could decrypt secret": sealed for another cluster/key - restore the key backup or re-seal. "already exists and is not managed by SealedSecret": annotate the Secret `sealedsecrets.bitnami.com/managed=true` |
 | `argocd: command not found` | Run the admin tools playbook (Phase 3 runbook step 1) and open a new SSH session |
 
 ### Pods Evicted / DiskPressure

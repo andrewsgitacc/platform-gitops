@@ -16,7 +16,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ORDER=(metallb cert-manager envoy-gateway external-dns argocd)
+ORDER=(metallb cert-manager sealed-secrets envoy-gateway external-dns argocd)
 
 log() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 
@@ -60,18 +60,30 @@ post_checks() {
       kubectl -n envoy-gateway-system wait certificate/apps-wildcard --for=condition=Ready --timeout=120s
       kubectl -n envoy-gateway-system wait gateway/lab-gateway --for=condition=Programmed --timeout=300s
       echo "Gateway address: $(kubectl -n envoy-gateway-system get gateway lab-gateway -o jsonpath='{.status.addresses[0].value}')" ;;
+    sealed-secrets)
+      kubectl -n kube-system rollout status deployment/sealed-secrets-controller --timeout=180s ;;
     external-dns)
-      kubectl -n external-dns rollout status deployment/external-dns --timeout=120s ;;
+      # The TSIG Secret comes from the SealedSecret in components/external-dns/manifests
+      for _ in $(seq 1 30); do
+        kubectl -n external-dns get secret external-dns-rfc2136 >/dev/null 2>&1 && break; sleep 5
+      done
+      kubectl -n external-dns get secret external-dns-rfc2136 >/dev/null || {
+        echo "ERROR: Secret external-dns-rfc2136 not created - is the sealing key restored? (scripts/backup-sealing-key.sh)" >&2; exit 1; }
+      kubectl -n external-dns rollout status deployment/external-dns --timeout=180s ;;
     argocd)
       kubectl -n argocd rollout status deployment/argocd-server --timeout=300s
       echo "Argo CD admin password: kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo" ;;
   esac
 }
 
+SEALING_KEY_BACKUP="${SEALING_KEY_BACKUP:-$HOME/sealed-secrets-key.yaml}"
+
 pre_checks() {
-  if [[ "$1" == external-dns ]] && ! kubectl -n external-dns get secret external-dns-rfc2136 >/dev/null 2>&1; then
-    echo "ERROR: secret external-dns/external-dns-rfc2136 missing - run scripts/create-external-dns-secret.sh first" >&2
-    exit 1
+  # Rebuilt cluster: restore the sealing key BEFORE the controller starts, so it can
+  # decrypt the SealedSecrets already in Git (otherwise it generates a new key).
+  if [[ "$1" == sealed-secrets && -f "$SEALING_KEY_BACKUP" ]]; then
+    log "restoring sealing key from $SEALING_KEY_BACKUP"
+    kubectl apply -f "$SEALING_KEY_BACKUP"
   fi
 }
 
