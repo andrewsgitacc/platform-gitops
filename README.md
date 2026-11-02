@@ -23,7 +23,8 @@ apps/<name>/       Workloads that run on the platform (hello = Phase 2 test app)
 argocd/            Argo CD project + ApplicationSets: one Application per component and app
 bootstrap/         root.yaml - the "app of apps", applied once by hand
 scripts/           Bootstrap helpers, run on the utility server (dns.lab.local)
-.github/workflows/ CI: render every chart and schema-check everything on each PR
+.github/workflows/ CI: render every chart and schema-check everything on each PR, using
+                   schemas generated from the pinned charts' own CRDs
 ```
 
 ## Components
@@ -533,6 +534,7 @@ kubectl apply -f apps/hello/hello.yaml                 # put it back
 | Browser certificate warning | Expected: the lab CA isn't trusted on the Mac (optional in step 2) |
 | Application OutOfSync / Degraded | `argocd app get <name>`, then `argocd app diff <name>`; UI shows per-resource status |
 | Gateway / HTTPRoute (or other objects) OutOfSync but `argocd app diff` is empty | Fields defaulted by Kubernetes. Argo CD uses server-side diff (`controller.diff.server.side` in `components/argocd/values.yaml`); after changing it, `argocd app get <name> --hard-refresh` |
+| CI **validate** fails in kubeconform: "additional properties '...' not allowed" on a custom resource | The schema used is older than the chart. CI generates schemas from the pinned charts' CRDs first; if the kind isn't from one of our charts it falls back to the community catalog. Check the field exists in the CRD version you pinned |
 | Application sync status `Unknown` | Argo CD couldn't render it: `kubectl -n argocd get application <name> -o jsonpath='{.status.conditions[*].message}'`. "not a valid chart repository ... 404": wrong `repo` in `chart.yaml` (check the chart's README for the current URL). The CI **validate** check fails on the same PR — don't merge until it's green |
 | Application not picking up a merge | `argocd app get <name> --hard-refresh`, or Refresh in the UI |
 | ApplicationSet created nothing | `kubectl -n argocd describe applicationset components` (conditions) |

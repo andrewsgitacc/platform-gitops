@@ -1,5 +1,8 @@
 # Validate every platform component on pull requests and pushes to main:
-#  - render each Helm chart with its pinned version and values
+#  - render each Helm chart with its pinned version and values (CRDs included)
+#  - turn the CRDs from those pinned charts into JSON schemas, so custom resources
+#    (CephCluster, Gateway, Certificate, ...) are checked against exactly the versions
+#    Argo CD deploys - community schema catalogs lag behind new releases
 #  - schema-check the rendered charts and all plain manifests with kubeconform
 # Runs on GitHub-hosted runners; it never touches the lab.
 name: validate
@@ -39,15 +42,30 @@ jobs:
             if [[ "$repo" == oci://* ]]; then ref="$repo/$chart"; args=(); else ref="$chart"; args=(--repo "$repo"); fi
             echo "::group::$c ($chart $version)"
             helm template "$release" "$ref" "${args[@]}" --version "$version" \
-              --namespace "$ns" --values "$dir/values.yaml" > "rendered/$c.yaml"
+              --namespace "$ns" --values "$dir/values.yaml" --include-crds > "rendered/$c.yaml"
             echo "rendered $(grep -c '^kind:' "rendered/$c.yaml") resources"
             echo "::endgroup::"
           done
 
+      - name: Schemas from the pinned charts' CRDs
+        run: |
+          set -euo pipefail
+          # PyYAML for the converter (newer Ubuntu runners refuse plain system pip installs)
+          python3 -c 'import yaml' 2>/dev/null || pip install --quiet --break-system-packages pyyaml
+          curl -sSLf -o openapi2jsonschema.py \
+            "https://raw.githubusercontent.com/yannh/kubeconform/${KUBECONFORM_VERSION}/scripts/openapi2jsonschema.py"
+          mkdir -p schemas
+          cd schemas
+          FILENAME_FORMAT='{fullgroup}-{kind}_{version}' python3 ../openapi2jsonschema.py ../rendered/*.yaml > /dev/null
+          echo "generated $(ls | wc -l) schemas from $(cat ../rendered/*.yaml | grep -c '^kind: CustomResourceDefinition' || true) CRDs"
+
+      # Schema lookup order: Kubernetes built-ins, then our charts' CRDs, then the
+      # community catalog for anything else.
       - name: kubeconform
         run: |
           kubeconform -strict -summary \
             -schema-location default \
+            -schema-location 'schemas/{{.Group}}-{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
             -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
             -ignore-missing-schemas \
             rendered/ components/*/manifests/ apps/ argocd/ bootstrap/
