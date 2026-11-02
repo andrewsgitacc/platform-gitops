@@ -43,6 +43,21 @@ cephClusterSpec:
         devices: [{name: nvme0n2}]
       - name: k8s-worker-03.lab.local
         devices: [{name: nvme0n2}]
+  # Ceph v20 warns about CephX keys using the older "aes" cipher. Ceph's own daemons
+  # already use aes256k, but the CSI drivers' keys can only move to aes256k on Linux
+  # kernel 7.0+, and CentOS Stream 9 runs 5.14. Until the nodes run a newer kernel,
+  # these three warnings are expected, so mute them (rather than let them hide real
+  # problems behind a permanent HEALTH_WARN).
+  # To lift: rotate the CSI keys to aes256k (Rook docs: CephX key rotation), restrict
+  # allowedCiphers, then set each policy to "unmute" (deleting the entries doesn't unmute).
+  healthCheck:
+    muteHealthWarning:
+      AUTH_INSECURE_CLIENT_KEY_TYPE:
+        policy: mute
+      AUTH_INSECURE_KEYS_ALLOWED:
+        policy: mute
+      AUTH_INSECURE_KEYS_CREATABLE:
+        policy: mute
   resources:
     mon:
       requests: {cpu: 100m, memory: 512Mi}
@@ -134,7 +149,10 @@ cephObjectStores:
           dataChunks: 2
           codingChunks: 1
         parameters:
-          bulk: "true"
+          # Not "bulk": that pre-allocates placement groups for a big pool and pushed
+          # the 3 OSDs over Ceph's limit (TOO_MANY_PGS, 265 > 250). Must be an explicit
+          # "false" - removing the setting doesn't unset it on an existing pool.
+          bulk: "false"
       preservePoolsOnDelete: true
       gateway:
         port: 80
