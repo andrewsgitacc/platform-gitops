@@ -1,0 +1,7 @@
+# Rook operator (and Ceph CSI operator): runs and manages the Ceph cluster defined in
+# components/rook-ceph-cluster. Also installs the Ceph CRDs.
+release: rook-ceph
+namespace: rook-ceph
+repo: https://charts.rook.io/release
+chart: rook-ceph
+version: v1.21.1   # keep rook-ceph-cluster at the same version

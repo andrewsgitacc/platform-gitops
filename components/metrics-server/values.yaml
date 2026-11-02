@@ -1,0 +1,4 @@
+args:
+  # LAB ONLY: kubeadm's kubelets serve self-signed certificates, so metrics-server can't
+  # verify them. Production clusters enable kubelet serving-cert approval instead.
+  - --kubelet-insecure-tls

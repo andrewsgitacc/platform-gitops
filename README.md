@@ -35,6 +35,9 @@ scripts/           Bootstrap helpers, run on the utility server (dns.lab.local)
 | [Envoy Gateway](components/envoy-gateway) | v1.9.1 | Kubernetes Gateway API. One gateway, `lab-gateway`, on **172.16.79.100**, HTTPS for `*.apps.lab.local` |
 | [external-dns](components/external-dns) | chart 1.23.0 | Creates `<name>.apps.lab.local` records on the lab BIND server for every HTTPRoute |
 | [Sealed Secrets](components/sealed-secrets) | chart 2.22.0 (v0.41.2) | Decrypts SealedSecrets from Git into Secrets; `kubeseal` on the utility server encrypts them |
+| [metrics-server](components/metrics-server) | chart 3.14.0 (v0.9.0) | `kubectl top nodes/pods` (CPU and memory use) |
+| [Rook operator](components/rook-ceph) | v1.21.1 | Runs Ceph on Kubernetes; Ceph CRDs and CSI drivers |
+| [Ceph cluster](components/rook-ceph-cluster) | v1.21.1 (Ceph v20) | 3 OSDs on the workers' 100 GB disks. StorageClasses `ceph-block` (default), `ceph-filesystem` (shared), `ceph-bucket` (S3). Dashboard https://ceph.apps.lab.local, S3 https://s3.apps.lab.local |
 | [Argo CD](components/argocd) | chart 10.10.2 (v3.5.4) | GitOps: deploys this repo, including itself. UI at https://argocd.apps.lab.local |
 
 How Argo CD deploys this repo:
@@ -92,6 +95,115 @@ There are two copies of this repo; don't mix them up:
 | Utility server (`ssh admin@172.16.79.10`) | `~/platform-gitops` | running `scripts/` and `kubectl`/`argocd`/`kubeseal` against the cluster |
 
 The utility server's copy is only ever updated with `git pull`; changes are made on the Mac.
+
+## Phase 5 runbook: Rook-Ceph storage
+
+Ceph turns the empty 100 GB disk on each worker into replicated storage for the whole
+platform. Commands run on the **utility server** unless marked *Mac*.
+
+### 1. Prepare the workers (*Mac*, labs repo)
+
+Loads the `rbd`/`ceph` kernel modules Ceph's drivers need and checks the disks are empty:
+
+```bash
+cd ~/GitHub/labs && git checkout main && git pull
+cd k8s && ansible-playbook -i k8s_inventory.ini 08_prepare_ceph_nodes.yml -k -K
+```
+
+Each worker should report `/dev/nvme0n2:  100G` with no filesystem type.
+
+### 2. Merge the Phase 5 pull request
+
+Argo CD creates three Applications: `metrics-server`, `rook-ceph` (operator) and
+`rook-ceph-cluster`. Ceph takes **5–10 minutes** to come up: monitors, then the manager,
+then a disk-preparation job per worker, then the OSDs. `rook-ceph-cluster` shows
+Progressing (and may retry) until the operator's CRDs exist — that's normal.
+
+```bash
+watch kubectl -n argocd get applications
+watch kubectl -n rook-ceph get pods                 # Ctrl-C when the osd-0/1/2 pods are Running
+```
+
+### 3. Check Ceph
+
+```bash
+kubectl -n rook-ceph get cephcluster                # PHASE Ready, HEALTH HEALTH_OK
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph status
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd tree     # 3 OSDs up, one per worker
+kubectl get storageclass                            # ceph-block (default), ceph-filesystem, ceph-bucket
+kubectl top nodes                                   # worker memory use (metrics-server)
+```
+
+`HEALTH_WARN` for a few minutes after start-up is normal (pools being created).
+
+### 4. Test block storage (data survives the pod)
+
+```bash
+kubectl create namespace storage-test
+kubectl -n storage-test apply -f - <<'YAML'
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: data}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 1Gi}}      # no storageClassName: uses the default, ceph-block
+YAML
+kubectl -n storage-test run writer --image=busybox --restart=Never \
+  --overrides='{"spec":{"volumes":[{"name":"d","persistentVolumeClaim":{"claimName":"data"}}],"containers":[{"name":"writer","image":"busybox","command":["sh","-c","echo hello-ceph > /d/test.txt"],"volumeMounts":[{"name":"d","mountPath":"/d"}]}]}}'
+kubectl -n storage-test wait --for=jsonpath='{.status.phase}'=Succeeded pod/writer --timeout=120s
+kubectl -n storage-test delete pod writer
+kubectl -n storage-test run reader --image=busybox --restart=Never -i --rm \
+  --overrides='{"spec":{"volumes":[{"name":"d","persistentVolumeClaim":{"claimName":"data"}}],"containers":[{"name":"reader","image":"busybox","command":["cat","/d/test.txt"],"volumeMounts":[{"name":"d","mountPath":"/d"}]}]}}'
+# prints: hello-ceph
+kubectl get pv | grep storage-test                  # bound to ceph-block
+```
+
+### 5. Test S3 object storage
+
+```bash
+kubectl -n storage-test apply -f - <<'YAML'
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata: {name: test-bucket}
+spec:
+  generateBucketName: test
+  storageClassName: ceph-bucket
+YAML
+sleep 15; kubectl -n storage-test get objectbucketclaim test-bucket     # PHASE Bound
+kubectl -n storage-test run s3 --image=amazon/aws-cli --restart=Never -i --rm \
+  --env AWS_ACCESS_KEY_ID="$(kubectl -n storage-test get secret test-bucket -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 -d)" \
+  --env AWS_SECRET_ACCESS_KEY="$(kubectl -n storage-test get secret test-bucket -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d)" \
+  --env BUCKET="$(kubectl -n storage-test get cm test-bucket -o jsonpath='{.data.BUCKET_NAME}')" \
+  --command -- sh -c 'echo hello-s3 > /tmp/f && E=http://rook-ceph-rgw-ceph-objectstore.rook-ceph.svc && aws --endpoint-url $E s3 cp /tmp/f s3://$BUCKET/f && aws --endpoint-url $E s3 ls s3://$BUCKET/'
+# lists: f
+```
+
+Clean up the tests: `kubectl delete namespace storage-test`
+
+### 6. Ceph dashboard
+
+```bash
+kubectl -n rook-ceph get secret rook-ceph-dashboard-password -o jsonpath='{.data.password}' | base64 -d; echo
+```
+
+*Mac:* open **https://ceph.apps.lab.local** (click through the certificate warning), log in as
+`admin`. Also `curl -k -s -o /dev/null -w '%{http_code}\n' https://s3.apps.lab.local` → `200`.
+
+### 7. Hand-off checks
+
+```bash
+kubectl top nodes          # workers well under 10 GB each (Ceph adds ~3-4 GB per worker)
+kubectl -n argocd get applications                  # all Synced + Healthy
+```
+
+### Phase 5 done when
+
+- [ ] `ceph status` shows HEALTH_OK with 3 OSDs up and in
+- [ ] `ceph-block` is the default StorageClass; a PVC's data survives its pod
+- [ ] An ObjectBucketClaim gets a bucket and the S3 test lists the object
+- [ ] Ceph dashboard reachable at https://ceph.apps.lab.local
+- [ ] `kubectl top nodes` works; workers have headroom
+- [ ] All Applications Synced + Healthy
 
 ## Phase 4 runbook: Sealed Secrets
 
@@ -414,6 +526,10 @@ kubectl apply -f apps/hello/hello.yaml                 # put it back
 | Pods `Evicted`, nodes tainted `disk-pressure` | See [Pods Evicted / DiskPressure](#pods-evicted--diskpressure) |
 | `argocd login` says "Invalid username or password" | See [Argo CD admin password](#argo-cd-admin-password) |
 | SealedSecret not turning into a Secret | `kubectl -n <ns> describe sealedsecret <name>` and `kubectl -n kube-system logs deploy/sealed-secrets-controller`. "no key could decrypt secret": sealed for another cluster/key - restore the key backup or re-seal. "already exists and is not managed by SealedSecret": annotate the Secret `sealedsecrets.bitnami.com/managed=true` |
+| Ceph OSD pods missing (no `rook-ceph-osd-N`) | `kubectl -n rook-ceph logs -l app=rook-ceph-osd-prepare --tail=50`. Usually the disk isn't empty (has a partition/filesystem) or isn't named `nvme0n2` on that node (`lsblk` on the worker) |
+| PVC stuck `Pending`, or pod can't mount a Ceph volume | `kubectl describe pvc <name>`; `kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph status`. "modprobe rbd" errors: run `labs/k8s/08_prepare_ceph_nodes.yml` |
+| `ceph status` HEALTH_WARN | `ceph health detail` in the tools pod. Clock skew: check chronyd on the workers. "too few PGs"/autoscale warnings settle on their own |
+| Pods `OOMKilled` / `Pending` "Insufficient memory" after Ceph | Worker RAM is full: `kubectl top nodes`. Raise workers to 12 GB (labs/platform → MacBook requirements) |
 | `argocd: command not found` | Run the admin tools playbook (Phase 3 runbook step 1) and open a new SSH session |
 
 ### Pods Evicted / DiskPressure
