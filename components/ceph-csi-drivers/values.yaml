@@ -1,0 +1,27 @@
+# Rook's recommended values for this chart (rook/rook v1.21.1,
+# deploy/charts/ceph-csi-drivers/values.yaml). The chart's own defaults don't work with
+# Rook: the driver names must match the provisioners in Rook's StorageClasses.
+operatorConfig:
+  namespace: rook-ceph
+
+driverSpecDefaults:
+  imageSet:
+    name: rook-csi-operator-image-set-configmap   # created by the Rook operator
+  nodePlugin:
+    priorityClassName: system-node-critical
+  controllerPlugin:
+    priorityClassName: system-cluster-critical
+
+drivers:
+  rbd:
+    enabled: true
+    name: rook-ceph.rbd.csi.ceph.com        # = StorageClass ceph-block provisioner
+  cephfs:
+    enabled: true
+    name: rook-ceph.cephfs.csi.ceph.com     # = StorageClass ceph-filesystem provisioner
+  nfs:
+    enabled: false
+    name: rook-ceph.nfs.csi.ceph.com
+  nvmeof:
+    enabled: false
+    name: rook-ceph.nvmeof.csi.ceph.com

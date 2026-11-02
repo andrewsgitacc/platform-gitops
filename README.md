@@ -37,6 +37,7 @@ scripts/           Bootstrap helpers, run on the utility server (dns.lab.local)
 | [Sealed Secrets](components/sealed-secrets) | chart 2.22.0 (v0.41.2) | Decrypts SealedSecrets from Git into Secrets; `kubeseal` on the utility server encrypts them |
 | [metrics-server](components/metrics-server) | chart 3.14.0 (v0.9.0) | `kubectl top nodes/pods` (CPU and memory use) |
 | [Rook operator](components/rook-ceph) | v1.21.1 | Runs Ceph on Kubernetes; Ceph CRDs and CSI drivers |
+| [Ceph CSI drivers](components/ceph-csi-drivers) | chart 1.1.0 | The rbd and cephfs drivers that create and mount Ceph volumes (separate chart since Rook v1.21) |
 | [Ceph cluster](components/rook-ceph-cluster) | v1.21.1 (Ceph v20) | 3 OSDs on the workers' 100 GB disks. StorageClasses `ceph-block` (default), `ceph-filesystem` (shared), `ceph-bucket` (S3). Dashboard https://ceph.apps.lab.local, S3 https://s3.apps.lab.local |
 | [Argo CD](components/argocd) | chart 10.10.2 (v3.5.4) | GitOps: deploys this repo, including itself. UI at https://argocd.apps.lab.local |
 
@@ -114,8 +115,8 @@ Each worker should report `/dev/nvme0n2:  100G` with no filesystem type.
 
 ### 2. Merge the Phase 5 pull request
 
-Argo CD creates three Applications: `metrics-server`, `rook-ceph` (operator) and
-`rook-ceph-cluster`. Ceph takes **5–10 minutes** to come up: monitors, then the manager,
+Argo CD creates four Applications: `metrics-server`, `rook-ceph` (operator),
+`ceph-csi-drivers` (the volume drivers) and `rook-ceph-cluster`. Ceph takes **5–10 minutes** to come up: monitors, then the manager,
 then a disk-preparation job per worker, then the OSDs. `rook-ceph-cluster` shows
 Progressing (and may retry) until the operator's CRDs exist — that's normal.
 
@@ -131,6 +132,8 @@ kubectl -n rook-ceph get cephcluster                # PHASE Ready, HEALTH HEALTH
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph status
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd tree     # 3 OSDs up, one per worker
 kubectl get storageclass                            # ceph-block (default), ceph-filesystem, ceph-bucket
+kubectl get drivers.csi.ceph.io -n rook-ceph        # rook-ceph.rbd.csi.ceph.com, rook-ceph.cephfs.csi.ceph.com
+kubectl -n rook-ceph get pods | grep -E 'ctrlplugin|nodeplugin'   # driver pods Running
 kubectl top nodes                                   # worker memory use (metrics-server)
 ```
 
@@ -527,6 +530,7 @@ kubectl apply -f apps/hello/hello.yaml                 # put it back
 | `argocd login` says "Invalid username or password" | See [Argo CD admin password](#argo-cd-admin-password) |
 | SealedSecret not turning into a Secret | `kubectl -n <ns> describe sealedsecret <name>` and `kubectl -n kube-system logs deploy/sealed-secrets-controller`. "no key could decrypt secret": sealed for another cluster/key - restore the key backup or re-seal. "already exists and is not managed by SealedSecret": annotate the Secret `sealedsecrets.bitnami.com/managed=true` |
 | Ceph OSD pods missing (no `rook-ceph-osd-N`) | `kubectl -n rook-ceph logs -l app=rook-ceph-osd-prepare --tail=50`. Usually the disk isn't empty (has a partition/filesystem) or isn't named `nvme0n2` on that node (`lsblk` on the worker) |
+| PVC `Pending` "waiting for a volume to be created by the external provisioner rook-ceph.rbd.csi.ceph.com" | The CSI drivers aren't deployed: `kubectl get drivers.csi.ceph.io -A` is empty. Since Rook v1.21 they come from the separate `ceph-csi-drivers` chart (component `ceph-csi-drivers`) |
 | PVC stuck `Pending`, or pod can't mount a Ceph volume | `kubectl describe pvc <name>`; `kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph status`. "modprobe rbd" errors: run `labs/k8s/08_prepare_ceph_nodes.yml` |
 | `ceph status` HEALTH_WARN (Argo CD shows `rook-ceph-cluster` Degraded) | `ceph health detail` in the tools pod. Clock skew: check chronyd on the workers. `TOO_MANY_PGS`: too many placement groups for 3 OSDs - don't mark pools `bulk`; the autoscaler shrinks them over ~30 min. `AUTH_INSECURE_*` (CSI keys use the older aes cipher): expected on kernel < 7.0, muted in `cephClusterSpec.healthCheck` with the reason |
 | Pods `OOMKilled` / `Pending` "Insufficient memory" after Ceph | Worker RAM is full: `kubectl top nodes`. Raise workers to 12 GB (labs/platform → MacBook requirements) |

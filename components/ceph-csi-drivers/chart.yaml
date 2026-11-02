@@ -1,0 +1,9 @@
+# Ceph CSI drivers (block "rbd" and shared filesystem "cephfs"): the pods that actually
+# create, attach and mount Ceph volumes. Since Rook v1.21 they're deployed by the
+# ceph-csi-operator (installed by components/rook-ceph) from this separate chart.
+# Without it, PVCs stay Pending ("waiting for ... rook-ceph.rbd.csi.ceph.com").
+release: ceph-csi-drivers
+namespace: rook-ceph
+repo: https://ceph.github.io/ceph-csi-operator
+chart: ceph-csi-drivers
+version: 1.1.0   # same as the ceph-csi-operator chart Rook v1.21.1 installs
