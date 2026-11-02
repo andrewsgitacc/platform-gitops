@@ -185,12 +185,23 @@ Clean up the tests: `kubectl delete namespace storage-test`
 
 ### 6. Ceph dashboard
 
+Rook creates the dashboard user `admin` with a random password, stored in the Secret
+`rook-ceph/rook-ceph-dashboard-password`. Set it to `admin` (**lab only**). Change it in both
+places: Rook re-applies the Secret's value, so changing it only in Ceph would be reverted.
+
 ```bash
-kubectl -n rook-ceph get secret rook-ceph-dashboard-password -o jsonpath='{.data.password}' | base64 -d; echo
+P=admin
+kubectl -n rook-ceph patch secret rook-ceph-dashboard-password -p "{\"stringData\":{\"password\":\"$P\"}}"
+printf '%s' "$P" | kubectl -n rook-ceph exec -i deploy/rook-ceph-tools -- \
+  sh -c 'cat > /tmp/p && ceph dashboard ac-user-set-password admin -i /tmp/p --force-password; rm -f /tmp/p'
+unset P
 ```
 
+(`--force-password` skips the dashboard's password policy, which rejects `admin` as too short.
+The password goes through a temporary file because Ceph doesn't take it on the command line.)
+
 *Mac:* open **https://ceph.apps.lab.local** (click through the certificate warning), log in as
-`admin`. Also `curl -k -s -o /dev/null -w '%{http_code}\n' https://s3.apps.lab.local` → `200`.
+`admin` / `admin`. Also `curl -k -s -o /dev/null -w '%{http_code}\n' https://s3.apps.lab.local` → `200`.
 
 ### 7. Hand-off checks
 
