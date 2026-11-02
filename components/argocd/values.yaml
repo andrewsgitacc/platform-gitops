@@ -6,6 +6,10 @@ configs:
   params:
     # TLS is terminated at lab-gateway (Envoy), which talks plain HTTP to argocd-server.
     server.insecure: true
+    # Compare Git with the cluster server-side (a dry-run apply), so fields Kubernetes
+    # fills in by default - e.g. on Gateway API objects: backendRefs kind/weight, path
+    # matches - aren't reported as OutOfSync. Recommended with ServerSideApply.
+    controller.diff.server.side: "true"
 
   cm:
     # Webhook/CRD CA bundles are injected at runtime (by cert-manager's cainjector,
