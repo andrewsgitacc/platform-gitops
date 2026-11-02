@@ -310,4 +310,45 @@ kubectl apply -f apps/hello/hello.yaml                 # put it back
 | Application OutOfSync / Degraded | `argocd app get <name>`, then `argocd app diff <name>`; UI shows per-resource status |
 | Application not picking up a merge | `argocd app get <name> --hard-refresh`, or Refresh in the UI |
 | ApplicationSet created nothing | `kubectl -n argocd describe applicationset components` (conditions) |
+| `no route to host` to 172.16.79.100 (gateway) | The Envoy pods aren't running, so MetalLB stops announcing the IP. Check `kubectl -n envoy-gateway-system get pods`; if they're `Evicted`, the nodes are out of disk — see [Pods Evicted / DiskPressure](#pods-evicted--diskpressure) |
+| Pods `Evicted`, nodes tainted `disk-pressure` | See [Pods Evicted / DiskPressure](#pods-evicted--diskpressure) |
+| `argocd login` says "Invalid username or password" | See [Argo CD admin password](#argo-cd-admin-password) |
+| `argocd: command not found` | Run the admin tools playbook (Phase 3 runbook step 1) and open a new SSH session |
+
+### Pods Evicted / DiskPressure
+
+When a node's disk passes ~85% full, the kubelet evicts pods and refuses new ones. Fix the
+disk first (node problem, documented in
+[labs/k8s → Troubleshooting](https://github.com/andrewsgitacc/labs/tree/main/k8s#troubleshooting)),
+then clean up and check the platform:
+
+```bash
+kubectl describe nodes | grep -E '^Name:|DiskPressure'                 # all False
+kubectl delete pods -A --field-selector=status.phase==Failed --wait=false   # clear evicted pods (can be thousands)
+kubectl get pods -A | grep -vE 'Running|Completed'                     # nothing stuck
+kubectl -n envoy-gateway-system get pods                               # envoy pods 2/2 Running
+curl -s https://hello.apps.lab.local | head -3                         # gateway answering
+```
+
+### Argo CD admin password
+
+Get the initial password again (only exists until you delete it after the first login):
+
+```bash
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo
+```
+
+Copy and paste it rather than typing it. If it's rejected or the secret is gone, set a new
+password directly (stores a bcrypt hash in `argocd-secret`):
+
+```bash
+NEWPASS='choose-a-password'
+HASH=$(argocd account bcrypt --password "$NEWPASS")
+kubectl -n argocd patch secret argocd-secret -p \
+  "{\"stringData\": {\"admin.password\": \"$HASH\", \"admin.passwordMtime\": \"$(date -u +%FT%TZ)\"}}"
+kubectl -n argocd rollout restart deployment argocd-server
+kubectl -n argocd rollout status deployment argocd-server
+argocd login argocd.apps.lab.local --grpc-web --username admin --password "$NEWPASS"
+kubectl -n argocd delete secret argocd-initial-admin-secret --ignore-not-found
+```
 | `curl` fails on the Mac with a certificate error | Add `-k`, or trust the CA on the Mac |
