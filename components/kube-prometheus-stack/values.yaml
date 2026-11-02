@@ -1,0 +1,115 @@
+# Metrics, alerting and dashboards for the platform. Data on Ceph (ceph-block).
+
+crds:
+  enabled: true
+
+prometheusOperator:
+  # Use cert-manager for the operator's admission webhook certificate instead of
+  # Helm hook jobs (cleaner under Argo CD).
+  admissionWebhooks:
+    certManager:
+      enabled: true
+
+prometheus:
+  prometheusSpec:
+    externalUrl: https://prometheus.apps.lab.local
+    retention: 7d
+    retentionSize: 12GB
+    # Pick up ServiceMonitors / PodMonitors / rules from every namespace and chart,
+    # not only those labelled for this Helm release.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    resources:
+      requests: {cpu: 200m, memory: 512Mi}
+      limits: {memory: 2Gi}
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: ceph-block
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 15Gi
+
+alertmanager:
+  alertmanagerSpec:
+    externalUrl: https://alertmanager.apps.lab.local
+    resources:
+      requests: {cpu: 20m, memory: 64Mi}
+      limits: {memory: 256Mi}
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: ceph-block
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 1Gi
+
+grafana:
+  adminUser: admin
+  adminPassword: admin          # LAB ONLY (SSO via Keycloak in Phase 7)
+  deploymentStrategy:
+    type: Recreate              # single pod with a ReadWriteOnce volume
+  persistence:
+    enabled: true
+    storageClassName: ceph-block
+    size: 1Gi
+  grafana.ini:
+    server:
+      root_url: https://grafana.apps.lab.local
+  # Logs from Loki (components/loki), next to the Prometheus data source.
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      uid: loki
+      url: http://loki-gateway.monitoring.svc
+      access: proxy
+  # Platform dashboards from grafana.com: Ceph (the ones Rook's docs recommend) and Argo CD.
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: platform
+          orgId: 1
+          folder: Platform
+          type: file
+          disableDeletion: false
+          options:
+            path: /var/lib/grafana/dashboards/platform
+  dashboards:
+    platform:
+      ceph-cluster:
+        gnetId: 2842
+        datasource: Prometheus
+      ceph-osd:
+        gnetId: 5336
+        datasource: Prometheus
+      ceph-pools:
+        gnetId: 5342
+        datasource: Prometheus
+      argocd:
+        gnetId: 14584
+        datasource: Prometheus
+
+# kubeadm runs etcd, the scheduler, the controller-manager and kube-proxy with their
+# metrics on 127.0.0.1 only, so Prometheus can't scrape them and their alerts would
+# fire permanently (TargetDown). Off for the lab; exposing them means changing the
+# kubeadm config (Phase 11).
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+defaultRules:
+  rules:
+    etcd: false
+    kubeControllerManager: false
+    kubeSchedulerAlerting: false
+    kubeSchedulerRecording: false
+    kubeProxy: false

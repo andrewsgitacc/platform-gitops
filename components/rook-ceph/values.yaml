@@ -1,7 +1,11 @@
 # Chart defaults: CRDs installed by the chart, CSI drivers via the bundled
-# ceph-csi-operator. Monitoring is switched on in Phase 6 (needs Prometheus first).
+# ceph-csi-operator. Monitoring on (Phase 6): lets the operator create the Ceph
+# ServiceMonitor and alert rules for Prometheus.
 #
 # WARNING (from the chart): never set crds.enabled=false after the first install -
 # removing the CRDs deletes the Ceph cluster and its data.
 crds:
+  enabled: true
+
+monitoring:
   enabled: true

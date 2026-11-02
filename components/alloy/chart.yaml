@@ -1,0 +1,6 @@
+# Grafana Alloy: collects every pod's logs on every node and sends them to Loki.
+release: alloy
+namespace: monitoring
+repo: https://grafana.github.io/helm-charts
+chart: alloy
+version: 1.11.1

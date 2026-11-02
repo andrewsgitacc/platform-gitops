@@ -1,24 +1,54 @@
 #!/usr/bin/env bash
-# Install / upgrade platform components with Helm, then apply their extra manifests.
+# Bootstrap a cluster for Argo CD, or install/upgrade single components with Helm.
 # Run on the utility server (dns.lab.local) from a clone of this repo.
 #
-#   ./scripts/install.sh                      # all Phase 2 components, in order
-#   ./scripts/install.sh cert-manager         # just one (re-runnable: helm upgrade --install)
+#   ./scripts/install.sh                      # bootstrap: all CRDs, Sealed Secrets, Argo CD
+#   ./scripts/install.sh crds                 # just the CRDs of every component
+#   ./scripts/install.sh cert-manager         # one component (re-runnable: helm upgrade --install)
+#
+# After the bootstrap, `kubectl apply -f bootstrap/root.yaml` and Argo CD installs every
+# other component from Git, retrying until its dependencies (storage, CRDs, ...) are ready.
+# Installing the CRDs first means no component ever fails on an unknown resource type
+# (e.g. ServiceMonitor before Prometheus exists).
 #
 # Each component lives in components/<name>/:
 #   chart.yaml   - chart repo, name, pinned version, release name, namespace
 #   values.yaml  - Helm values
 #   manifests/   - extra resources applied after the chart (pools, issuers, gateways...)
 #
-# From Phase 3, Argo CD installs the same components from the same files (see argocd/
-# and bootstrap/). This script is then only needed to bootstrap a fresh cluster:
-# run it once for everything, then apply bootstrap/root.yaml and Argo CD takes over.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ORDER=(metallb cert-manager sealed-secrets envoy-gateway external-dns metrics-server rook-ceph ceph-csi-drivers rook-ceph-cluster argocd)
+BOOTSTRAP=(crds sealed-secrets argocd)   # everything else: Argo CD
 
 log() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
+
+chart_ref() {   # sets: release ns version ref args[] for components/$1
+  local dir="$ROOT/components/$1" repo chart
+  release=$(yq '.release' "$dir/chart.yaml"); ns=$(yq '.namespace' "$dir/chart.yaml")
+  repo=$(yq '.repo' "$dir/chart.yaml"); chart=$(yq '.chart' "$dir/chart.yaml")
+  version=$(yq '.version' "$dir/chart.yaml")
+  args=()
+  if [[ "$repo" == oci://* ]]; then ref="$repo/$chart"; else ref="$chart"; args=(--repo "$repo"); fi
+}
+
+install_crds() {
+  log "CRDs of every component (rendered from the pinned charts)"
+  local dir c tmp
+  tmp=$(mktemp)
+  for dir in "$ROOT"/components/*/; do
+    c=$(basename "$dir")
+    chart_ref "$c"
+    helm template "$release" "$ref" "${args[@]}" --version "$version" --namespace "$ns" \
+      --values "$dir/values.yaml" --include-crds \
+      | yq 'select(.kind == "CustomResourceDefinition")' > "$tmp"
+    if [[ -s "$tmp" ]]; then
+      echo "  $c: $(grep -c '^kind: CustomResourceDefinition' "$tmp") CRDs"
+      kubectl apply --server-side --force-conflicts -f "$tmp" >/dev/null
+    fi
+  done
+  rm -f "$tmp"
+}
 
 install_chart() {
   local dir="$1" release ns repo chart version ref
@@ -88,9 +118,10 @@ pre_checks() {
 }
 
 components=("$@")
-[[ ${#components[@]} -gt 0 ]] || components=("${ORDER[@]}")
+[[ ${#components[@]} -gt 0 ]] || components=("${BOOTSTRAP[@]}")
 
 for c in "${components[@]}"; do
+  if [[ "$c" == crds ]]; then install_crds; continue; fi
   dir="$ROOT/components/$c"
   [[ -f "$dir/chart.yaml" ]] || { echo "Unknown component: $c" >&2; exit 1; }
   pre_checks "$c"

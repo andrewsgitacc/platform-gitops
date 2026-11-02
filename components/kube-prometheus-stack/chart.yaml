@@ -1,0 +1,7 @@
+# Prometheus Operator, Prometheus, Alertmanager, Grafana, node-exporter and
+# kube-state-metrics, with the standard Kubernetes dashboards and alerts.
+release: kube-prometheus-stack
+namespace: monitoring
+repo: https://prometheus-community.github.io/helm-charts
+chart: kube-prometheus-stack
+version: 89.2.2

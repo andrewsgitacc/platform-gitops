@@ -1,0 +1,6 @@
+# Log storage and querying. Grafana moved its community charts to grafana-community.
+release: loki
+namespace: monitoring
+repo: https://grafana-community.github.io/helm-charts
+chart: loki
+version: 18.3.0
