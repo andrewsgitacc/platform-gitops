@@ -308,6 +308,7 @@ kubectl apply -f apps/hello/hello.yaml                 # put it back
 | No DNS record | `kubectl -n external-dns logs deploy/external-dns`; on the DNS server `sudo journalctl -u named -n 50` |
 | Browser certificate warning | Expected: the lab CA isn't trusted on the Mac (optional in step 2) |
 | Application OutOfSync / Degraded | `argocd app get <name>`, then `argocd app diff <name>`; UI shows per-resource status |
+| Gateway / HTTPRoute (or other objects) OutOfSync but `argocd app diff` is empty | Fields defaulted by Kubernetes. Argo CD uses server-side diff (`controller.diff.server.side` in `components/argocd/values.yaml`); after changing it, `argocd app get <name> --hard-refresh` |
 | Application not picking up a merge | `argocd app get <name> --hard-refresh`, or Refresh in the UI |
 | ApplicationSet created nothing | `kubectl -n argocd describe applicationset components` (conditions) |
 | `no route to host` to 172.16.79.100 (gateway) | The Envoy pods aren't running, so MetalLB stops announcing the IP. Check `kubectl -n envoy-gateway-system get pods`; if they're `Evicted`, the nodes are out of disk — see [Pods Evicted / DiskPressure](#pods-evicted--diskpressure) |
