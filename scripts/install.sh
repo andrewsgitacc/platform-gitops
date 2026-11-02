@@ -16,7 +16,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ORDER=(metallb cert-manager sealed-secrets envoy-gateway external-dns argocd)
+ORDER=(metallb cert-manager sealed-secrets envoy-gateway external-dns metrics-server rook-ceph rook-ceph-cluster argocd)
 
 log() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 

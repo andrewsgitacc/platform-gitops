@@ -1,0 +1,152 @@
+# Ceph for the lab: 3 OSDs (the empty 100 GB /dev/nvme0n2 on each worker), 3-way
+# replication across the workers, and sizes trimmed so the whole platform fits in
+# 3 x 10 GB of worker RAM (Ceph's defaults assume dedicated storage servers).
+#
+# WARNING: removing this component (or its folder) makes Argo CD delete the CephCluster.
+# The disks keep their data (no cleanupPolicy), but the cluster stops. Don't.
+
+operatorNamespace: rook-ceph
+
+# ceph CLI pod: kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph status
+toolbox:
+  enabled: true
+
+# Switched on in Phase 6, once Prometheus exists.
+monitoring:
+  enabled: false
+
+# Cap each OSD's cache memory (Ceph default 4 GiB per OSD).
+configOverride: |
+  [osd]
+  osd_memory_target = 1610612736
+
+cephClusterSpec:
+  mon:
+    count: 3                 # one per worker; quorum survives losing one
+    allowMultiplePerNode: false
+  mgr:
+    count: 1                 # default 2; one is enough for a lab
+    modules:
+      - name: rook
+        enabled: false       # chart default (enabling it can leave Ceph in HEALTH_WARN)
+  dashboard:
+    enabled: true
+    ssl: false               # TLS is terminated at lab-gateway (ceph.apps.lab.local)
+    port: 7000
+  storage:
+    useAllNodes: false
+    useAllDevices: false
+    nodes:
+      - name: k8s-worker-01.lab.local
+        devices: [{name: nvme0n2}]
+      - name: k8s-worker-02.lab.local
+        devices: [{name: nvme0n2}]
+      - name: k8s-worker-03.lab.local
+        devices: [{name: nvme0n2}]
+  resources:
+    mon:
+      requests: {cpu: 100m, memory: 512Mi}
+      limits: {memory: 1Gi}
+    mgr:
+      requests: {cpu: 100m, memory: 512Mi}
+      limits: {memory: 1Gi}
+    osd:
+      requests: {cpu: 200m, memory: 1Gi}
+      limits: {memory: 2Gi}
+    prepareosd:
+      requests: {cpu: 100m, memory: 50Mi}
+      limits: {memory: 400Mi}
+
+# Block storage: the cluster's default StorageClass "ceph-block" (chart default, kept).
+cephBlockPools:
+  - name: ceph-blockpool
+    spec:
+      failureDomain: host
+      replicated:
+        size: 3
+    storageClass:
+      enabled: true
+      name: ceph-block
+      isDefault: true
+      reclaimPolicy: Delete
+      allowVolumeExpansion: true
+      volumeBindingMode: Immediate
+      parameters:
+        imageFormat: "2"
+        imageFeatures: layering
+        csi.storage.k8s.io/provisioner-secret-name: rook-csi-rbd-provisioner
+        csi.storage.k8s.io/provisioner-secret-namespace: rook-ceph
+        csi.storage.k8s.io/controller-expand-secret-name: rook-csi-rbd-provisioner
+        csi.storage.k8s.io/controller-expand-secret-namespace: rook-ceph
+        csi.storage.k8s.io/node-stage-secret-name: rook-csi-rbd-node
+        csi.storage.k8s.io/node-stage-secret-namespace: rook-ceph
+        csi.storage.k8s.io/fstype: ext4
+
+# Shared filesystem: StorageClass "ceph-filesystem" (ReadWriteMany volumes).
+# One metadata server without a standby, at 1 GiB (chart default: 2 x 4 GiB).
+cephFileSystems:
+  - name: ceph-filesystem
+    spec:
+      metadataPool:
+        replicated:
+          size: 3
+      dataPools:
+        - name: data0
+          failureDomain: host
+          replicated:
+            size: 3
+      metadataServer:
+        activeCount: 1
+        activeStandby: false
+        priorityClassName: system-cluster-critical
+        resources:
+          requests: {cpu: 100m, memory: 512Mi}
+          limits: {memory: 1Gi}
+    storageClass:
+      enabled: true
+      isDefault: false
+      name: ceph-filesystem
+      pool: data0
+      reclaimPolicy: Delete
+      allowVolumeExpansion: true
+      volumeBindingMode: Immediate
+      parameters:
+        csi.storage.k8s.io/provisioner-secret-name: rook-csi-cephfs-provisioner
+        csi.storage.k8s.io/provisioner-secret-namespace: rook-ceph
+        csi.storage.k8s.io/controller-expand-secret-name: rook-csi-cephfs-provisioner
+        csi.storage.k8s.io/controller-expand-secret-namespace: rook-ceph
+        csi.storage.k8s.io/node-stage-secret-name: rook-csi-cephfs-node
+        csi.storage.k8s.io/node-stage-secret-namespace: rook-ceph
+        csi.storage.k8s.io/fstype: ext4
+
+# S3-compatible object storage (RGW): StorageClass "ceph-bucket" for ObjectBucketClaims,
+# endpoint https://s3.apps.lab.local. Used by Loki, Harbor and Velero later.
+cephObjectStores:
+  - name: ceph-objectstore
+    spec:
+      metadataPool:
+        failureDomain: host
+        replicated:
+          size: 3
+      dataPool:
+        failureDomain: host
+        erasureCoded:          # 2 data + 1 parity chunk across the 3 workers
+          dataChunks: 2
+          codingChunks: 1
+        parameters:
+          bulk: "true"
+      preservePoolsOnDelete: true
+      gateway:
+        port: 80
+        instances: 1
+        priorityClassName: system-cluster-critical
+        resources:
+          requests: {cpu: 100m, memory: 512Mi}
+          limits: {memory: 1Gi}
+    storageClass:
+      enabled: true
+      name: ceph-bucket
+      reclaimPolicy: Delete
+      volumeBindingMode: Immediate
+      parameters:
+        region: us-east-1

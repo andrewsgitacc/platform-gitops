@@ -1,0 +1,6 @@
+# Resource metrics API: kubectl top nodes/pods, and HPA. Small.
+release: metrics-server
+namespace: kube-system
+repo: https://kubernetes-sigs.github.io/metrics-server/
+chart: metrics-server
+version: 3.14.0   # metrics-server v0.9.0

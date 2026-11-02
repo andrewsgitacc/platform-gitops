@@ -1,0 +1,36 @@
+# Ceph dashboard: https://ceph.apps.lab.local (login admin, password in the Secret
+# rook-ceph/rook-ceph-dashboard-password).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: ceph-dashboard
+  namespace: rook-ceph
+spec:
+  parentRefs:
+    - name: lab-gateway
+      namespace: envoy-gateway-system
+      sectionName: https
+  hostnames:
+    - ceph.apps.lab.local
+  rules:
+    - backendRefs:
+        - name: rook-ceph-mgr-dashboard
+          port: 7000
+---
+# S3 endpoint (Ceph RGW): https://s3.apps.lab.local
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: ceph-s3
+  namespace: rook-ceph
+spec:
+  parentRefs:
+    - name: lab-gateway
+      namespace: envoy-gateway-system
+      sectionName: https
+  hostnames:
+    - s3.apps.lab.local
+  rules:
+    - backendRefs:
+        - name: rook-ceph-rgw-ceph-objectstore
+          port: 80

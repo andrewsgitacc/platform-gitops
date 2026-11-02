@@ -1,0 +1,6 @@
+# The Ceph cluster, pools, filesystem, object store and StorageClasses.
+release: rook-ceph-cluster
+namespace: rook-ceph
+repo: https://charts.rook.io/release
+chart: rook-ceph-cluster
+version: v1.21.1   # same as the operator (components/rook-ceph)
