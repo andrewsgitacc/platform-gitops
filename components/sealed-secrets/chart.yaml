@@ -1,5 +1,5 @@
 release: sealed-secrets-controller
 namespace: kube-system
-repo: https://bitnami-labs.github.io/sealed-secrets
+repo: https://bitnami.github.io/sealed-secrets   # charts are published under bitnami.github.io, not bitnami-labs
 chart: sealed-secrets
 version: 2.22.0   # controller v0.41.2 (keep kubeseal in labs/admin at the same version)
