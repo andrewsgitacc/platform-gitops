@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# Seal external-dns's TSIG key into components/external-dns/manifests/tsig-sealedsecret.yaml.
+# Seal external-dns's TSIG key into ~/tsig-sealedsecret.yaml, for committing as
+# components/external-dns/manifests/tsig-sealedsecret.yaml.
 # Run on the utility server (dns.lab.local), which holds the key BIND uses
 # (/etc/named/externaldns.key). The output is encrypted for this cluster only and is
 # safe to commit to the public repo.
+#
+# The file is written to your home folder, not into this clone, so a later `git pull`
+# of the committed copy can't clash with it.
 #
 # Then copy the file to the Mac, commit it, open a PR and merge: Argo CD applies it and
 # the Sealed Secrets controller creates the Secret external-dns/external-dns-rfc2136.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KEY_FILE=/etc/named/externaldns.key
-OUT="$ROOT/components/external-dns/manifests/tsig-sealedsecret.yaml"
+OUT="$HOME/tsig-sealedsecret.yaml"
 
 SECRET=$(sudo awk -F'"' '/secret/ {print $2}' "$KEY_FILE")
 [[ -n "$SECRET" ]] || { echo "No secret found in $KEY_FILE" >&2; exit 1; }
@@ -34,7 +37,7 @@ fi
 cat <<MSG
 
 Next, on the Mac:
-  scp admin@172.16.79.10:platform-gitops/components/external-dns/manifests/tsig-sealedsecret.yaml \\
+  scp admin@172.16.79.10:tsig-sealedsecret.yaml \\
     ~/GitHub/platform-gitops/components/external-dns/manifests/
   then commit, push, open a PR and merge.
 MSG
