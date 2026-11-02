@@ -82,6 +82,17 @@ decrypts them, so they're safe in a public repo.
 > mind that anyone holding the CA's private key could create certificates your Mac trusts
 > for any website, which is why the key never leaves the cluster.
 
+## Where commands run
+
+There are two copies of this repo; don't mix them up:
+
+| Machine | Repo path | Used for |
+|---|---|---|
+| Mac | `~/GitHub/platform-gitops` | editing, committing, pushing, pull requests |
+| Utility server (`ssh admin@172.16.79.10`) | `~/platform-gitops` | running `scripts/` and `kubectl`/`argocd`/`kubeseal` against the cluster |
+
+The utility server's copy is only ever updated with `git pull`; changes are made on the Mac.
+
 ## Phase 4 runbook: Sealed Secrets
 
 Two pull requests: the first adds the controller (Argo CD installs it), the second adds the
@@ -131,8 +142,7 @@ scp admin@172.16.79.10:sealed-secrets-key.yaml ~/lab-secrets/
 ```bash
 cd ~/GitHub/platform-gitops && git checkout main && git pull
 git checkout -b external-dns-sealed-tsig
-scp admin@172.16.79.10:platform-gitops/components/external-dns/manifests/tsig-sealedsecret.yaml \
-  components/external-dns/manifests/
+scp admin@172.16.79.10:tsig-sealedsecret.yaml components/external-dns/manifests/
 git add components/external-dns/manifests/tsig-sealedsecret.yaml
 git commit -m "external-dns: TSIG key as a SealedSecret" && git push -u origin external-dns-sealed-tsig
 ```
