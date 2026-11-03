@@ -40,6 +40,9 @@ scripts/           Bootstrap helpers, run on the utility server (dns.lab.local)
 | [Rook operator](components/rook-ceph) | v1.21.1 | Runs Ceph on Kubernetes; Ceph CRDs and CSI drivers |
 | [Ceph CSI drivers](components/ceph-csi-drivers) | chart 1.1.0 | The rbd and cephfs drivers that create and mount Ceph volumes (separate chart since Rook v1.21) |
 | [Ceph cluster](components/rook-ceph-cluster) | v1.21.1 (Ceph v20) | 3 OSDs on the workers' 100 GB disks. StorageClasses `ceph-block` (default), `ceph-filesystem` (shared), `ceph-bucket` (S3). Dashboard https://ceph.apps.lab.local, S3 https://s3.apps.lab.local |
+| [kube-prometheus-stack](components/kube-prometheus-stack) | chart 92.17.1 | Prometheus, Alertmanager, Grafana, node-exporter, kube-state-metrics; Kubernetes dashboards and alerts. https://grafana.apps.lab.local (admin / admin, lab only), https://prometheus.apps.lab.local, https://alertmanager.apps.lab.local |
+| [Loki](components/loki) | chart 20.2.1 | Log storage, monolithic, data in the Ceph S3 bucket `loki-data`; 7-day retention |
+| [Alloy](components/alloy) | chart 1.15.0 | Collects every pod's logs on every node and sends them to Loki |
 | [Argo CD](components/argocd) | chart 10.10.2 (v3.5.4) | GitOps: deploys this repo, including itself. UI at https://argocd.apps.lab.local |
 
 How Argo CD deploys this repo:
@@ -97,6 +100,83 @@ There are two copies of this repo; don't mix them up:
 | Utility server (`ssh admin@172.16.79.10`) | `~/platform-gitops` | running `scripts/` and `kubectl`/`argocd`/`kubeseal` against the cluster |
 
 The utility server's copy is only ever updated with `git pull`; changes are made on the Mac.
+
+## Phase 6 runbook: Observability
+
+Metrics (Prometheus), alerts (Alertmanager), logs (Loki + Alloy) and dashboards (Grafana).
+Ceph, Argo CD and cert-manager now expose metrics too. Commands run on the **utility
+server** unless marked *Mac*.
+
+### 1. Merge the Phase 6 pull request
+
+Argo CD creates `kube-prometheus-stack`, `loki` and `alloy`, and updates `rook-ceph`,
+`rook-ceph-cluster`, `argocd` and `cert-manager` (metrics on). Allow ~5–10 minutes: the
+Prometheus CRDs come first, then the operator, then Prometheus/Grafana with their Ceph
+volumes. Apps that need the monitoring CRDs retry until they exist.
+
+```bash
+watch kubectl -n argocd get applications            # all Synced + Healthy
+kubectl -n monitoring get pods                      # prometheus-..., alertmanager-..., grafana, loki-0, alloy-xxxxx (one per node)
+kubectl -n monitoring get pvc                       # Bound, ceph-block
+kubectl -n monitoring get objectbucketclaim         # loki-bucket Bound
+```
+
+### 2. Prometheus is scraping everything
+
+*Mac:* open **https://prometheus.apps.lab.local** → Status → Targets. Everything should be
+**UP**, including `rook-ceph`, `argocd-*` and `cert-manager`. Or on the utility server:
+
+```bash
+kubectl -n monitoring exec prometheus-kube-prometheus-stack-prometheus-0 -c prometheus -- \
+  wget -qO- 'http://localhost:9090/api/v1/targets?state=active' \
+  | jq -r '.data.activeTargets[] | select(.health!="up") | "\(.labels.job) \(.health) \(.lastError)"'
+# no output = every target up
+```
+
+### 3. Alerts
+
+*Mac:* **https://alertmanager.apps.lab.local**. Expect only **Watchdog** (an always-firing
+"alerting works" heartbeat) and possibly **InfoInhibitor**. Anything else is worth a look.
+
+### 4. Grafana
+
+*Mac:* **https://grafana.apps.lab.local**, log in **admin / admin** (lab only; skip the
+change-password prompt or set your own). Check:
+
+- Dashboards → **Kubernetes / Compute Resources / Cluster** shows CPU and memory per namespace
+- Dashboards → **Platform** → **Ceph - Cluster** shows HEALTH_OK and 3 OSDs
+- Dashboards → **Platform** → **ArgoCD** shows the Applications
+
+### 5. Logs
+
+In Grafana: **Explore** → data source **Loki** → query `{namespace="hello"}` → logs from the
+hello app. Try `{namespace="rook-ceph", container="mgr"}` or `{app="argocd-server"}`.
+
+From the utility server:
+
+```bash
+kubectl -n monitoring exec loki-0 -c loki -- wget -qO- 'http://localhost:3100/loki/api/v1/labels' | jq -r '.data[]'
+# namespace, pod, container, app, node ...
+```
+
+Logs are stored in Ceph: `kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket loki-data | jq '.usage'`
+shows the bucket growing.
+
+### 6. Memory check
+
+```bash
+kubectl top nodes
+kubectl top pods -n monitoring --sort-by=memory
+```
+
+### Phase 6 done when
+
+- [ ] All Applications Synced + Healthy; monitoring PVCs and the Loki bucket Bound
+- [ ] Every Prometheus target UP (Ceph, Argo CD, cert-manager included)
+- [ ] Only Watchdog (and InfoInhibitor) firing in Alertmanager
+- [ ] Grafana: Kubernetes, Ceph and Argo CD dashboards show data
+- [ ] Loki: `{namespace="hello"}` returns logs in Grafana Explore
+- [ ] Workers still have memory headroom
 
 ## Phase 5 runbook: Rook-Ceph storage
 
@@ -398,8 +478,10 @@ argocd app get app-hello                        # Synced to the new commit
 
 ## Phase 2 runbook (history)
 
-How the Phase 2 components were first installed, before Argo CD. To rebuild everything on
-a new cluster, see "Rebuilding the platform from scratch" in
+How the Phase 2 components were first installed, before Argo CD. These commands still work
+for single components, but `./scripts/install.sh` with no arguments now only bootstraps
+(all CRDs, Sealed Secrets, Argo CD) and Argo CD installs the rest. To rebuild everything
+on a new cluster, see "Rebuilding the platform from scratch" in
 [labs/platform](https://github.com/andrewsgitacc/labs/tree/main/platform#rebuilding-the-platform-from-scratch).
 
 All commands run on the **utility server** unless marked *Mac*.
@@ -547,6 +629,10 @@ kubectl apply -f apps/hello/hello.yaml                 # put it back
 | PVC stuck `Pending`, or pod can't mount a Ceph volume | `kubectl describe pvc <name>`; `kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph status`. "modprobe rbd" errors: run `labs/k8s/08_prepare_ceph_nodes.yml` |
 | `ceph status` HEALTH_WARN (Argo CD shows `rook-ceph-cluster` Degraded) | `ceph health detail` in the tools pod. Clock skew: check chronyd on the workers. `TOO_MANY_PGS`: too many placement groups for 3 OSDs - don't mark pools `bulk`; the autoscaler shrinks them over ~30 min. `AUTH_INSECURE_*` (CSI keys use the older aes cipher): expected on kernel < 7.0, muted in `cephClusterSpec.healthCheck` with the reason |
 | Pods `OOMKilled` / `Pending` "Insufficient memory" after Ceph | Worker RAM is full: `kubectl top nodes`. Raise workers to 12 GB (labs/platform → MacBook requirements) |
+| Grafana / Prometheus pod `Pending` | Its PVC isn't bound: `kubectl -n monitoring get pvc`, `kubectl -n monitoring describe pvc <name>`. Check Ceph and the CSI drivers (Phase 5) |
+| Prometheus target DOWN | Prometheus → Status → Targets shows the error. TLS/403 on kubelet: chart default handles it. etcd/scheduler/controller-manager/kube-proxy are deliberately not scraped (kubeadm binds them to 127.0.0.1) |
+| No logs in Grafana (Loki) | `kubectl -n monitoring logs ds/alloy --tail=20` (push errors?) and `kubectl -n monitoring logs loki-0 -c loki --tail=30` (S3 errors: check `kubectl -n monitoring get objectbucketclaim loki-bucket` and that the Secret `loki-bucket` exists) |
+| Grafana Ceph/Argo CD dashboards empty | The dashboard's Prometheus job names may differ from the dashboard's queries; check the panel's query in Explore. Rook: `monitoring.enabled` in both rook-ceph components |
 | `argocd: command not found` | Run the admin tools playbook (Phase 3 runbook step 1) and open a new SSH session |
 
 ### Pods Evicted / DiskPressure

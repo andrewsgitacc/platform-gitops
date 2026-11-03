@@ -11,9 +11,10 @@ operatorNamespace: rook-ceph
 toolbox:
   enabled: true
 
-# Switched on in Phase 6, once Prometheus exists.
+# Prometheus scrapes Ceph (manager + exporter) and loads Ceph's alert rules (Phase 6).
 monitoring:
-  enabled: false
+  enabled: true
+  createPrometheusRules: true
 
 # Cap each OSD's cache memory (Ceph default 4 GiB per OSD).
 configOverride: |

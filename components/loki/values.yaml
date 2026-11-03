@@ -1,0 +1,78 @@
+# Loki in monolithic mode (one pod - plenty for a lab). Log data goes to the Ceph S3
+# bucket "loki-data" (manifests/bucket.yaml); its credentials come from the Secret
+# the bucket claim creates, read as environment variables.
+deploymentMode: Monolithic
+
+loki:
+  auth_enabled: false            # single tenant: no X-Scope-OrgID header needed
+  commonConfig:
+    replication_factor: 1
+  schemaConfig:
+    configs:
+      - from: "2026-01-01"
+        store: tsdb
+        object_store: s3
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h
+  limits_config:
+    retention_period: 168h       # keep logs 7 days
+    allow_structured_metadata: true
+    volume_enabled: true
+  compactor:
+    retention_enabled: true
+    delete_request_store: s3
+  storage:
+    type: s3
+    bucketNames:
+      chunks: loki-data
+      ruler: loki-data
+      admin: loki-data
+    s3:
+      endpoint: rook-ceph-rgw-ceph-objectstore.rook-ceph.svc   # Ceph RGW, in-cluster
+      region: us-east-1
+      accessKeyId: ${AWS_ACCESS_KEY_ID}
+      secretAccessKey: ${AWS_SECRET_ACCESS_KEY}
+      s3ForcePathStyle: true
+      insecure: true             # plain HTTP inside the cluster
+
+singleBinary:
+  replicas: 1
+  extraArgs:
+    - -config.expand-env=true    # substitute ${AWS_...} from the environment
+  extraEnvFrom:
+    - secretRef:
+        name: loki-bucket        # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from the bucket claim
+  persistence:
+    storageClass: ceph-block
+    size: 5Gi
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 1Gi}
+
+# Zero out the other deployment modes' components.
+backend: {replicas: 0}
+read: {replicas: 0}
+write: {replicas: 0}
+ingester: {replicas: 0}
+querier: {replicas: 0}
+queryFrontend: {replicas: 0}
+queryScheduler: {replicas: 0}
+distributor: {replicas: 0}
+compactor: {replicas: 0}
+indexGateway: {replicas: 0}
+bloomPlanner: {replicas: 0}
+bloomBuilder: {replicas: 0}
+bloomGateway: {replicas: 0}
+
+# The chart's memcached caches reserve GBs of RAM by default - not needed in a lab.
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+
+lokiCanary:
+  enabled: false
+test:
+  enabled: false

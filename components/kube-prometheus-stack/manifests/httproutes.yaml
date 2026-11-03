@@ -1,0 +1,39 @@
+# Grafana, Prometheus and Alertmanager UIs through lab-gateway.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  parentRefs:
+    - {name: lab-gateway, namespace: envoy-gateway-system, sectionName: https}
+  hostnames: [grafana.apps.lab.local]
+  rules:
+    - backendRefs:
+        - {name: kube-prometheus-stack-grafana, port: 80}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  parentRefs:
+    - {name: lab-gateway, namespace: envoy-gateway-system, sectionName: https}
+  hostnames: [prometheus.apps.lab.local]
+  rules:
+    - backendRefs:
+        - {name: kube-prometheus-stack-prometheus, port: 9090}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: alertmanager
+  namespace: monitoring
+spec:
+  parentRefs:
+    - {name: lab-gateway, namespace: envoy-gateway-system, sectionName: https}
+  hostnames: [alertmanager.apps.lab.local]
+  rules:
+    - backendRefs:
+        - {name: kube-prometheus-stack-alertmanager, port: 9093}
