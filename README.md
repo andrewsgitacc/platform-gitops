@@ -144,7 +144,8 @@ kubectl -n monitoring exec prometheus-kube-prometheus-stack-prometheus-0 -c prom
 change-password prompt or set your own). Check:
 
 - Dashboards → **Kubernetes / Compute Resources / Cluster** shows CPU and memory per namespace
-- Dashboards → **Platform** → **Ceph - Cluster** shows HEALTH_OK and 3 OSDs
+- Dashboards → **Platform** → **Ceph Cluster - Advanced**, **OSD Overview**, **Ceph Pools
+  Overview** show HEALTH_OK, 3 OSDs and the pools (Ceph's own dashboards for v20.2.4)
 - Dashboards → **Platform** → **ArgoCD** shows the Applications
 
 ### 5. Logs
@@ -632,6 +633,7 @@ kubectl apply -f apps/hello/hello.yaml                 # put it back
 | Grafana / Prometheus pod `Pending` | Its PVC isn't bound: `kubectl -n monitoring get pvc`, `kubectl -n monitoring describe pvc <name>`. Check Ceph and the CSI drivers (Phase 5) |
 | Prometheus target DOWN | Prometheus → Status → Targets shows the error. TLS/403 on kubelet: chart default handles it. etcd/scheduler/controller-manager/kube-proxy are deliberately not scraped (kubeadm binds them to 127.0.0.1) |
 | No logs in Grafana (Loki) | `kubectl -n monitoring logs ds/alloy --tail=20` (push errors?) and `kubectl -n monitoring logs loki-0 -c loki --tail=30` (S3 errors: check `kubectl -n monitoring get objectbucketclaim loki-bucket` and that the Secret `loki-bucket` exists) |
+| Grafana Ceph dashboard mostly N/A / "No data" but Status shows | Dashboard written for older Ceph metric names. Use Ceph's own dashboards from the Ceph source at the running Ceph version (`url:` in the kube-prometheus-stack values), not old grafana.com uploads |
 | Grafana Ceph/Argo CD dashboards empty | The dashboard's Prometheus job names may differ from the dashboard's queries; check the panel's query in Explore. Rook: `monitoring.enabled` in both rook-ceph components |
 | `argocd: command not found` | Run the admin tools playbook (Phase 3 runbook step 1) and open a new SSH session |
 

@@ -67,7 +67,9 @@ grafana:
       uid: loki
       url: http://loki-gateway.monitoring.svc
       access: proxy
-  # Platform dashboards from grafana.com: Ceph (the ones Rook's docs recommend) and Argo CD.
+  # Platform dashboards: Ceph's own dashboards from the Ceph source at the SAME version we
+  # run (keep the tag in step with Ceph, see components/rook-ceph-cluster), and Argo CD's
+  # from grafana.com. (The old grafana.com Ceph dashboards use pre-v20 metric names.)
   dashboardProviders:
     dashboardproviders.yaml:
       apiVersion: 1
@@ -82,14 +84,11 @@ grafana:
   dashboards:
     platform:
       ceph-cluster:
-        gnetId: 2842
-        datasource: Prometheus
-      ceph-osd:
-        gnetId: 5336
-        datasource: Prometheus
+        url: https://raw.githubusercontent.com/ceph/ceph/v20.2.4/monitoring/ceph-mixin/dashboards_out/ceph-cluster-advanced.json
+      ceph-osds:
+        url: https://raw.githubusercontent.com/ceph/ceph/v20.2.4/monitoring/ceph-mixin/dashboards_out/osds-overview.json
       ceph-pools:
-        gnetId: 5342
-        datasource: Prometheus
+        url: https://raw.githubusercontent.com/ceph/ceph/v20.2.4/monitoring/ceph-mixin/dashboards_out/pool-overview.json
       argocd:
         gnetId: 14584
         datasource: Prometheus
