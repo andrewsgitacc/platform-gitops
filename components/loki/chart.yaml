@@ -3,4 +3,4 @@ release: loki
 namespace: monitoring
 repo: https://grafana-community.github.io/helm-charts
 chart: loki
-version: 18.3.0
+version: 20.2.1

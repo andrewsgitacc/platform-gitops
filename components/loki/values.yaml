@@ -72,8 +72,6 @@ chunksCache:
 resultsCache:
   enabled: false
 
-minio:
-  enabled: false
 lokiCanary:
   enabled: false
 test:

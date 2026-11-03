@@ -40,9 +40,9 @@ scripts/           Bootstrap helpers, run on the utility server (dns.lab.local)
 | [Rook operator](components/rook-ceph) | v1.21.1 | Runs Ceph on Kubernetes; Ceph CRDs and CSI drivers |
 | [Ceph CSI drivers](components/ceph-csi-drivers) | chart 1.1.0 | The rbd and cephfs drivers that create and mount Ceph volumes (separate chart since Rook v1.21) |
 | [Ceph cluster](components/rook-ceph-cluster) | v1.21.1 (Ceph v20) | 3 OSDs on the workers' 100 GB disks. StorageClasses `ceph-block` (default), `ceph-filesystem` (shared), `ceph-bucket` (S3). Dashboard https://ceph.apps.lab.local, S3 https://s3.apps.lab.local |
-| [kube-prometheus-stack](components/kube-prometheus-stack) | chart 89.2.2 | Prometheus, Alertmanager, Grafana, node-exporter, kube-state-metrics; Kubernetes dashboards and alerts. https://grafana.apps.lab.local (admin / admin, lab only), https://prometheus.apps.lab.local, https://alertmanager.apps.lab.local |
-| [Loki](components/loki) | chart 18.3.0 | Log storage, monolithic, data in the Ceph S3 bucket `loki-data`; 7-day retention |
-| [Alloy](components/alloy) | chart 1.11.1 | Collects every pod's logs on every node and sends them to Loki |
+| [kube-prometheus-stack](components/kube-prometheus-stack) | chart 92.17.1 | Prometheus, Alertmanager, Grafana, node-exporter, kube-state-metrics; Kubernetes dashboards and alerts. https://grafana.apps.lab.local (admin / admin, lab only), https://prometheus.apps.lab.local, https://alertmanager.apps.lab.local |
+| [Loki](components/loki) | chart 20.2.1 | Log storage, monolithic, data in the Ceph S3 bucket `loki-data`; 7-day retention |
+| [Alloy](components/alloy) | chart 1.15.0 | Collects every pod's logs on every node and sends them to Loki |
 | [Argo CD](components/argocd) | chart 10.10.2 (v3.5.4) | GitOps: deploys this repo, including itself. UI at https://argocd.apps.lab.local |
 
 How Argo CD deploys this repo:
