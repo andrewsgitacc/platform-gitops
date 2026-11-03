@@ -60,6 +60,11 @@ grafana:
   grafana.ini:
     server:
       root_url: https://grafana.apps.lab.local
+    security:
+      # LAB ONLY: don't lock the admin account after repeated wrong passwords (Grafana
+      # otherwise blocks it for 5 minutes, which also blocks scripts/curl using admin).
+      # Never set this on an internet-facing Grafana.
+      disable_brute_force_login_protection: true
   # Logs from Loki (components/loki), next to the Prometheus data source.
   additionalDataSources:
     - name: Loki

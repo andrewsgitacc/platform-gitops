@@ -140,8 +140,10 @@ kubectl -n monitoring exec prometheus-kube-prometheus-stack-prometheus-0 -c prom
 
 ### 4. Grafana
 
-*Mac:* **https://grafana.apps.lab.local**, log in **admin / admin** (lab only; skip the
-change-password prompt or set your own). Check:
+*Mac:* **https://grafana.apps.lab.local**, log in **admin / admin** (lab only). Click
+**Skip** on the change-password prompt: a password set there is stored on Grafana's volume
+and overrides the chart's `adminPassword`. Login lockout after wrong passwords is turned
+off (`disable_brute_force_login_protection`, **lab only**). Check:
 
 - Dashboards → **Kubernetes / Compute Resources / Cluster** shows CPU and memory per namespace
 - Dashboards → **Platform** → **Ceph Cluster - Advanced**, **OSD Overview**, **Ceph Pools
@@ -635,6 +637,7 @@ kubectl apply -f apps/hello/hello.yaml                 # put it back
 | No logs in Grafana (Loki) | `kubectl -n monitoring logs ds/alloy --tail=20` (push errors?) and `kubectl -n monitoring logs loki-0 -c loki --tail=30` (S3 errors: check `kubectl -n monitoring get objectbucketclaim loki-bucket` and that the Secret `loki-bucket` exists) |
 | Grafana Ceph dashboard mostly N/A / "No data" but Status shows | Dashboard written for older Ceph metric names. Use Ceph's own dashboards from the Ceph source at the running Ceph version (`url:` in the kube-prometheus-stack values), not old grafana.com uploads |
 | Grafana Ceph/Argo CD dashboards empty | The dashboard's Prometheus job names may differ from the dashboard's queries; check the panel's query in Explore. Rook: `monitoring.enabled` in both rook-ceph components |
+| Grafana login fails with admin / admin (browser or `curl -u admin:admin` gets "Invalid username or password") | The password was changed at the first-login prompt (it's kept on Grafana's volume, so the chart value no longer applies). See [Grafana admin password](#grafana-admin-password) |
 | `argocd: command not found` | Run the admin tools playbook (Phase 3 runbook step 1) and open a new SSH session |
 
 ### Pods Evicted / DiskPressure
@@ -651,6 +654,23 @@ kubectl get pods -A | grep -vE 'Running|Completed'                     # nothing
 kubectl -n envoy-gateway-system get pods                               # envoy pods 2/2 Running
 curl -s https://hello.apps.lab.local | head -3                         # gateway answering
 ```
+
+### Grafana admin password
+
+Reset it to `admin` (**lab only**) from the utility server. This writes straight to
+Grafana's database, so you don't need the old password:
+
+```bash
+kubectl -n monitoring exec deploy/kube-prometheus-stack-grafana -c grafana -- \
+  grafana cli --homepath /usr/share/grafana --config /etc/grafana/grafana.ini \
+  admin reset-admin-password admin
+curl -sk -u admin:admin 'https://grafana.apps.lab.local/api/search?type=dash-db' | jq -r '.[].title'
+```
+
+If the log says "too many consecutive incorrect login attempts" (`kubectl -n monitoring logs
+deploy/kube-prometheus-stack-grafana -c grafana --since=15m | grep -i blocked`), Grafana has
+locked the account for 5 minutes. The lab turns that lockout off in the kube-prometheus-stack
+values (`grafana.ini` → `security.disable_brute_force_login_protection: true`, **lab only**).
 
 ### Argo CD admin password
 
