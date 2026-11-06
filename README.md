@@ -126,7 +126,9 @@ Commands run on the **utility server** unless marked *Mac*.
 
 ### 1. Seal the SSO secrets (before merging)
 
-The script needs the branch, so check it out on the utility server for a moment:
+*Mac:* push the branch first (`git push -u origin phase-7-keycloak`), but don't merge yet:
+Keycloak's realm Job, Argo CD and Grafana need the sealed secrets from this step. The
+script is on the branch, so check it out on the utility server for a moment:
 
 ```bash
 cd ~/platform-gitops && git fetch && git checkout phase-7-keycloak
