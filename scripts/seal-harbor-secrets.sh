@@ -13,8 +13,9 @@
 #
 # The three files belong together (the client secret is in two of them): re-running the
 # script makes new values, and then all three must be committed again. Re-sealing after
-# Harbor has stored data also changes secretKey, which makes stored registry credentials
-# (replication endpoints) unreadable - fine for a fresh install, avoid it later.
+# Harbor has stored data also changes secretKey, which makes stored secrets (users' CLI
+# secrets, replication credentials) unreadable - fine for a fresh install, avoid it later.
+# To replace only the token certificate: ./scripts/seal-harbor-secrets.sh --token-only
 set -euo pipefail
 
 for t in kubeseal openssl jq htpasswd; do
@@ -22,9 +23,12 @@ for t in kubeseal openssl jq htpasswd; do
 done
 
 OUT="$HOME/harbor-sealed"
+TOKEN_ONLY=false
+[[ "${1:-}" == "--token-only" ]] && TOKEN_ONLY=true   # re-make only harbor-token
 mkdir -p "$OUT"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 
+if ! $TOKEN_ONLY; then
 echo "Password for Harbor's local 'admin' (8+ characters, upper and lower case and a digit):"
 read -rsp "  password: " ADMIN_PW; echo
 read -rsp "  same again: " PW2; echo
@@ -69,9 +73,13 @@ header() {
     --from-literal=CONFIG_OVERWRITE_JSON="$OIDC_JSON" \
     --dry-run=client -o yaml | kubeseal --format yaml
 } > "$OUT/harbor-secrets-sealedsecret.yaml"
+fi
 
-openssl req -x509 -newkey rsa:4096 -nodes -days 3650 -subj "/CN=harbor-token-ca" \
-  -keyout "$TMP/tls.key" -out "$TMP/tls.crt" 2>/dev/null
+# Harbor only reads a PKCS#1 key ("BEGIN RSA PRIVATE KEY"); OpenSSL 3 writes PKCS#8 by
+# default, hence -traditional.
+openssl genrsa -traditional -out "$TMP/tls.key" 4096 2>/dev/null
+openssl req -x509 -new -key "$TMP/tls.key" -days 3650 -subj "/CN=harbor-token-ca" \
+  -out "$TMP/tls.crt"
 {
   header "Harbor's registry token signing certificate"
   kubectl create secret generic harbor-token --namespace harbor \
@@ -79,12 +87,14 @@ openssl req -x509 -newkey rsa:4096 -nodes -days 3650 -subj "/CN=harbor-token-ca"
     --dry-run=client -o yaml | kubeseal --format yaml
 } > "$OUT/harbor-token-sealedsecret.yaml"
 
+if ! $TOKEN_ONLY; then
 {
   header "Harbor's Keycloak client secret"
   kubectl create secret generic keycloak-harbor-client --namespace keycloak \
     --from-literal=client-secret="$CLIENT_SECRET" \
     --dry-run=client -o yaml | kubeseal --format yaml
 } > "$OUT/harbor-client-sealedsecret.yaml"
+fi
 
 unset ADMIN_PW PW2 REGISTRY_PW CLIENT_SECRET OIDC_JSON
 ls -l "$OUT"
