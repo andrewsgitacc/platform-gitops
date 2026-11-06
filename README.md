@@ -154,14 +154,17 @@ cd ~/platform-gitops && git fetch && git checkout phase-8-harbor && git pull
 git checkout main
 ```
 
-*Mac:* add the three files to the branch and push:
+*Mac:* add the three files to the branch and push. Copy them with **one** `scp` (each
+`scp` asks for the password, and pasted lines after the first get eaten as passwords).
+**Merge only after the PR shows this commit.**
 
 ```bash
 cd ~/GitHub/platform-gitops && git checkout phase-8-harbor
-scp admin@172.16.79.10:harbor-sealed/harbor-secrets-sealedsecret.yaml components/harbor/manifests/
-scp admin@172.16.79.10:harbor-sealed/harbor-token-sealedsecret.yaml components/harbor/manifests/
-scp admin@172.16.79.10:harbor-sealed/harbor-client-sealedsecret.yaml components/keycloak/manifests/
-git add components/*/manifests/*-sealedsecret.yaml
+scp -r admin@172.16.79.10:harbor-sealed /tmp/
+cp /tmp/harbor-sealed/harbor-{secrets,token}-sealedsecret.yaml components/harbor/manifests/
+cp /tmp/harbor-sealed/harbor-client-sealedsecret.yaml components/keycloak/manifests/
+rm -rf /tmp/harbor-sealed
+git add components/*/manifests/*-sealedsecret.yaml && git status -s     # 3 new files
 git commit -m "Phase 8: sealed Harbor secrets" && git push
 ```
 
@@ -184,7 +187,7 @@ OutOfSync), apply it by hand as in Phase 7: `kubectl apply --server-side -f comp
 
 ### 4. Log in
 
-*Mac:* **https://harbor.apps.lab.local** → **LOGIN VIA OIDC PROVIDER** → Keycloak user
+*Mac:* **https://harbor.apps.lab.local** → **LOGIN WITH Keycloak** → Keycloak user
 `admin`. Harbor creates the user automatically, named by its email, **`admin@lab.local`**
 (Harbor's own local user is already called `admin`). You're a Harbor admin through the
 `platform-admins` group (**Administration** is visible). The local admin logs in with the
@@ -918,8 +921,10 @@ kubectl apply -f apps/hello/hello.yaml                 # put it back
 | Grafana Keycloak user is only Viewer | Same: no `platform-admins` in the `groups` claim. Grafana re-evaluates the role at every login |
 | Harbor pods `CreateContainerConfigError` "secret harbor-secrets not found" | The sealed files from `scripts/seal-harbor-secrets.sh` aren't committed |
 | Harbor pod `ErrImagePull` / `exec format error` | An image without an arm64 build: check the tag is `v2.16.0-rc1` (or later) for every component in `components/harbor/values.yaml` |
-| Harbor "LOGIN VIA OIDC PROVIDER" fails with a certificate error | Harbor doesn't trust the lab CA: `kubectl -n harbor get secret harbor-ca-bundle`; then `kubectl -n harbor rollout restart deployment harbor-core` |
+| Harbor "LOGIN WITH Keycloak" fails with a certificate error | Harbor doesn't trust the lab CA: `kubectl -n harbor get secret harbor-ca-bundle`; then `kubectl -n harbor rollout restart deployment harbor-core` |
 | Harbor OIDC user not admin | The `groups` claim lacks `platform-admins`, or `oidc_admin_group` in the CONFIG_OVERWRITE_JSON (seal script) differs. Harbor applies group admin rights at each login |
+| `podman login` to Harbor: "Requesting bearer token: ... 500"; harbor-core log "unable to get PrivateKey from PEM type: PRIVATE KEY" | The token-signing key is PKCS#8, Harbor needs PKCS#1 ("RSA PRIVATE KEY"). Re-make it with `./scripts/seal-harbor-secrets.sh --token-only` (fixed script), commit the new `harbor-token-sealedsecret.yaml`, then `kubectl -n harbor rollout restart deployment harbor-core` |
+| Pull request merged but the cluster lacks the sealed files | The sealed-secrets commit was pushed after the merge. Check the PR lists it before merging; otherwise open a second PR from the same branch |
 | `podman push` to Harbor: "unauthorized" | With OIDC login the registry password is the user's **CLI secret** (User Profile), not the Keycloak password; or use a robot account |
 | Pod `ErrImagePull` from harbor.apps.lab.local: "x509: certificate signed by unknown authority" | The node doesn't trust the lab CA: run `labs/k8s/13_trust_lab_ca.yml` (again after every rebuild) |
 | Harbor registry errors writing layers (S3) | `kubectl -n harbor logs deploy/harbor-registry -c registry --tail=30`; check `kubectl -n harbor get objectbucketclaim harbor-bucket` is Bound and the Secret `harbor-bucket` exists |
