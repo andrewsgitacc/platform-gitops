@@ -1,0 +1,35 @@
+# Keycloak's PostgreSQL database, run by CloudNativePG (components/cloudnative-pg).
+# One instance on ceph-block (Ceph already keeps 3 copies). CloudNativePG creates:
+#   Service keycloak-db-rw    read-write endpoint
+#   Secret  keycloak-db-app   username / password for the "keycloak" database
+# No database backups yet: Velero in Phase 11.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: keycloak-db
+  namespace: keycloak
+spec:
+  instances: 1
+  bootstrap:
+    initdb:
+      database: keycloak
+      owner: keycloak
+  storage:
+    storageClass: ceph-block
+    size: 2Gi
+  resources:
+    requests: {cpu: 50m, memory: 256Mi}
+    limits: {memory: 512Mi}
+---
+# Database metrics (port "metrics" on each instance) for Prometheus.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: keycloak-db
+  namespace: keycloak
+spec:
+  selector:
+    matchLabels:
+      cnpg.io/cluster: keycloak-db
+  podMetricsEndpoints:
+    - port: metrics
