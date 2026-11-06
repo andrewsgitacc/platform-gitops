@@ -1,0 +1,7 @@
+# Renovate: opens pull requests when a new version of a chart, image or GitHub Action we
+# pin is released. Runs hourly as a CronJob; configured per repo by its renovate.json.
+release: renovate
+namespace: renovate
+repo: https://docs.renovatebot.com/helm-charts
+chart: renovate
+version: 46.416.6   # Renovate 44.221.6

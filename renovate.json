@@ -1,0 +1,51 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "timezone": "Australia/Sydney",
+  "labels": ["renovate"],
+  "prConcurrentLimit": 5,
+  "kubernetes": {
+    "managerFilePatterns": ["/^components/[^/]+/manifests/[^/]+\\.yaml$/", "/^apps/.+\\.yaml$/"]
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Helm charts from HTTP repos in components/*/chart.yaml",
+      "managerFilePatterns": ["/^components/[^/]+/chart\\.yaml$/"],
+      "matchStrings": [
+        "repo:\\s*(?<registryUrl>https?://\\S+)[\\s\\S]*?chart:\\s*(?<depName>\\S+)[\\s\\S]*?version:\\s*(?<currentValue>\\S+)"
+      ],
+      "datasourceTemplate": "helm"
+    },
+    {
+      "customType": "regex",
+      "description": "Helm charts from OCI registries in components/*/chart.yaml",
+      "managerFilePatterns": ["/^components/[^/]+/chart\\.yaml$/"],
+      "matchStrings": [
+        "repo:\\s*oci://(?<registry>\\S+)[\\s\\S]*?chart:\\s*(?<chart>\\S+)[\\s\\S]*?version:\\s*(?<currentValue>\\S+)"
+      ],
+      "depNameTemplate": "{{{registry}}}/{{{chart}}}",
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Harbor image tags (components/harbor/values.yaml overrides the chart's)",
+      "managerFilePatterns": ["/^components/harbor/values\\.yaml$/"],
+      "matchStrings": ["image: \\{tag: (?<currentValue>v[0-9][^}\\s]*)\\}"],
+      "depNameTemplate": "goharbor/harbor-core",
+      "datasourceTemplate": "docker"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "ARC's controller and runner scale sets must move together",
+      "matchDepNames": ["/actions-runner-controller-charts/"],
+      "groupName": "actions-runner-controller"
+    },
+    {
+      "description": "All Harbor image tags in one PR",
+      "matchDepNames": ["goharbor/harbor-core"],
+      "groupName": "harbor images"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+# Self-hosted GitHub Actions runners for github.com/andrewsgitacc/sample-app.
+# Workflows use them with `runs-on: arc-sample-app`. A personal GitHub account can only
+# register runners per repository, so each repository gets its own scale set like this one.
+release: arc-sample-app        # = the runner scale set name (runs-on)
+namespace: arc-runners
+repo: oci://ghcr.io/actions/actions-runner-controller-charts
+chart: gha-runner-scale-set
+version: 0.15.1                # keep the same as components/arc-controller

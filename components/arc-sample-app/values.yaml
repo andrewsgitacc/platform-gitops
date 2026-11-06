@@ -1,0 +1,77 @@
+# Runners for sample-app: none while idle, one pod per queued job (up to 2), deleted when
+# the job ends. Each pod has the runner plus a rootless BuildKit sidecar that builds
+# container images (the nodes have no Docker).
+
+githubConfigUrl: https://github.com/andrewsgitacc/sample-app
+# Fine-grained personal access token (key github_token), from a SealedSecret
+# (manifests/github-token-sealedsecret.yaml, scripts/seal-ci-secrets.sh).
+githubConfigSecret: arc-github-token
+
+minRunners: 0
+maxRunners: 2
+
+# The controller's service account (components/arc-controller). Set explicitly because
+# the chart would otherwise look it up with Helm "lookup", which Argo CD doesn't run.
+controllerServiceAccount:
+  namespace: arc-systems
+  name: arc-controller
+
+template:
+  spec:
+    initContainers:
+      # Native sidecar (restartPolicy: Always): starts before the runner, stops after it.
+      # Rootless BuildKit: no privileged container; needs seccomp/AppArmor unconfined for its
+      # user namespace, and no process sandbox inside builds.
+      - name: buildkitd
+        image: moby/buildkit:v0.34.2-rootless
+        restartPolicy: Always
+        args:
+          - --addr
+          - tcp://127.0.0.1:1234          # only reachable inside this pod
+          - --config
+          - /etc/buildkit/buildkitd.toml
+          - --oci-worker-no-process-sandbox
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          seccompProfile: {type: Unconfined}
+          appArmorProfile: {type: Unconfined}
+        startupProbe:
+          exec:
+            command: [buildctl, --addr, tcp://127.0.0.1:1234, debug, workers]
+          periodSeconds: 2
+          failureThreshold: 30
+        resources:
+          requests: {cpu: 250m, memory: 512Mi}
+          limits: {memory: 2Gi}
+        volumeMounts:
+          - {name: buildkitd-config, mountPath: /etc/buildkit, readOnly: true}
+          - {name: lab-ca-bundle, mountPath: /etc/lab-ca, readOnly: true}
+          - {name: buildkit-state, mountPath: /home/user/.local/share/buildkit}
+    containers:
+      - name: runner
+        image: ghcr.io/actions/actions-runner:2.338.2
+        command: ["/home/runner/run.sh"]
+        env:
+          # For docker/setup-buildx-action (driver: remote): the BuildKit sidecar.
+          - name: BUILDKIT_HOST
+            value: tcp://127.0.0.1:1234
+          # Trust the lab CA in the runner too (curl, git, Node-based actions).
+          - name: NODE_EXTRA_CA_CERTS
+            value: /etc/lab-ca/ca-certificates.crt
+          - name: SSL_CERT_FILE
+            value: /etc/lab-ca/ca-certificates.crt
+        resources:
+          requests: {cpu: 100m, memory: 256Mi}
+          limits: {memory: 1Gi}
+        volumeMounts:
+          - {name: lab-ca-bundle, mountPath: /etc/lab-ca, readOnly: true}
+    volumes:
+      - name: buildkitd-config
+        configMap:
+          name: buildkitd-config        # manifests/buildkitd-config.yaml
+      - name: lab-ca-bundle
+        configMap:
+          name: lab-ca-bundle           # public CAs + lab CA, from trust-manager
+      - name: buildkit-state
+        emptyDir: {}

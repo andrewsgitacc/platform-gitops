@@ -48,6 +48,9 @@ scripts/           Bootstrap helpers, run on the utility server (dns.lab.local)
 | [CloudNativePG](components/cloudnative-pg) | chart 0.29.1 (operator 1.30.1) | PostgreSQL operator; databases are `Cluster` resources next to the app that uses them |
 | [Keycloak](components/keycloak) | keycloakx chart 7.4.0 (Keycloak 26.8.1) | Single sign-on for Argo CD and Grafana. https://keycloak.apps.lab.local (admin console: admin / admin, lab only). Realm `platform` as code, applied by keycloak-config-cli |
 | [Harbor](components/harbor) | chart 1.19.4, images v2.16.0-rc1 | Container registry with Trivy scanning. https://harbor.apps.lab.local (Keycloak login). Database from CloudNativePG, images in the Ceph S3 bucket `harbor-registry`. First arm64 release is 2.16, hence the release candidate |
+| [ARC controller](components/arc-controller) | chart 0.15.1 | GitHub Actions Runner Controller: runs GitHub Actions jobs as pods in the cluster |
+| [ARC runners for sample-app](components/arc-sample-app) | chart 0.15.1 | Runner scale set `arc-sample-app` (`runs-on: arc-sample-app`): 0–2 ephemeral runner pods, each with a rootless BuildKit sidecar for image builds |
+| [Renovate](components/renovate) | chart 46.416.6 (Renovate 44.221.6) | Hourly CronJob opening update PRs for charts, images and actions, in repos with a `renovate.json` (this one: see [renovate.json](renovate.json)) |
 
 How Argo CD deploys this repo:
 
@@ -96,6 +99,12 @@ decrypts them, so they're safe in a public repo.
   `components/harbor/manifests/harbor-token-sealedsecret.yaml` and
   `components/keycloak/manifests/harbor-client-sealedsecret.yaml` (one set). The chart's own
   random secrets would change on every Argo CD sync, so none are left to it.
+- **CI tokens** (Phase 9): two fine-grained GitHub personal access tokens, sealed by
+  `scripts/seal-ci-secrets.sh` into `components/arc-sample-app/manifests/github-token-sealedsecret.yaml`
+  (ARC: registers runners on sample-app) and `components/renovate/manifests/renovate-token-sealedsecret.yaml`
+  (Renovate: opens PRs). They expire (a year at most): re-run the script with new tokens.
+  The Harbor robot account sample-app's pipeline pushes with is stored as GitHub Actions
+  secrets in that repository, not here.
 - **Lab-only plain passwords**: the Grafana `admin` and Keycloak master-realm `admin`
   logins are `admin` / `admin`, in plain text in the values (kept as ways in when SSO is
   broken). Never do this outside a lab.
@@ -121,6 +130,120 @@ There are two copies of this repo; don't mix them up:
 | Utility server (`ssh admin@172.16.79.10`) | `~/platform-gitops` | running `scripts/` and `kubectl`/`argocd`/`kubeseal` against the cluster |
 
 The utility server's copy is only ever updated with `git pull`; changes are made on the Mac.
+
+## Phase 9 runbook: CI
+
+GitHub Actions jobs for `sample-app` run **in the cluster**: ARC starts a runner pod per job
+(scale set `arc-sample-app`, 0–2 pods) with a rootless **BuildKit** sidecar, the job builds
+the image and pushes it to **Harbor**, and Harbor scans it with Trivy. **Renovate** runs hourly
+and opens pull requests when new versions of the charts, images and actions we pin appear
+(in this repo, rules in [renovate.json](renovate.json); e.g. Harbor rc1 → v2.16.0). Commands
+run on the **utility server** unless marked *Mac*/*GitHub*.
+
+### 1. Two GitHub tokens (*GitHub*)
+
+https://github.com/settings/personal-access-tokens → **Generate new token** (fine-grained),
+resource owner `andrewsgitacc`, expiry up to a year:
+
+| Token | Repositories | Permissions |
+|---|---|---|
+| `lab-arc` | `sample-app` | Administration: **Read and write** |
+| `lab-renovate` | `platform-gitops`, `sample-app` | **Read and write**: Contents, Pull requests, Issues, Workflows, Commit statuses. **Read**: Dependabot alerts |
+
+### 2. Seal them (before merging)
+
+*Mac:* push the branch (`git push -u origin phase-9-ci`), don't merge yet. Then:
+
+```bash
+cd ~/platform-gitops && git fetch && git checkout phase-9-ci && git pull
+./scripts/seal-ci-secrets.sh          # paste the two tokens; it checks they work
+git checkout main
+```
+
+*Mac:* one `scp` for both files, commit, push. **Merge only once the PR shows this commit.**
+
+```bash
+cd ~/GitHub/platform-gitops && git checkout phase-9-ci
+scp -r admin@172.16.79.10:ci-sealed /tmp/
+cp /tmp/ci-sealed/github-token-sealedsecret.yaml components/arc-sample-app/manifests/
+cp /tmp/ci-sealed/renovate-token-sealedsecret.yaml components/renovate/manifests/
+rm -rf /tmp/ci-sealed
+git add components/*/manifests/*-sealedsecret.yaml && git status -s     # 2 new files
+git commit -m "Phase 9: sealed CI tokens" && git push
+```
+
+### 3. Merge and check
+
+Argo CD creates `arc-controller`, `arc-sample-app` and `renovate`:
+
+```bash
+watch kubectl -n argocd get applications            # all three Synced + Healthy
+kubectl -n arc-systems get pods                     # arc-gha-rs-controller-... and arc-sample-app-...-listener Running
+kubectl -n arc-runners get autoscalingrunnerset     # arc-sample-app, 0 runners while idle
+```
+
+*GitHub:* sample-app → Settings → Actions → **Runners**: `arc-sample-app` is listed.
+
+### 4. Harbor project and robot account for CI
+
+A private project `sample-app` that scans every push, and a robot account that may only
+push/pull there (Harbor's local `admin` password from Phase 8):
+
+```bash
+read -rsp "Harbor admin password: " HPW; echo
+H=https://harbor.apps.lab.local/api/v2.0
+curl -s -o /dev/null -w 'project: HTTP %{http_code}\n' -u "admin:$HPW" -H 'Content-Type: application/json' \
+  -X POST "$H/projects" -d '{"project_name":"sample-app","public":false,"metadata":{"auto_scan":"true"}}'
+curl -s -u "admin:$HPW" -H 'Content-Type: application/json' -X POST "$H/robots" -d '{
+  "name": "ci", "duration": -1, "level": "project", "description": "sample-app CI pushes",
+  "permissions": [{"kind": "project", "namespace": "sample-app", "access": [
+    {"resource": "repository", "action": "push"}, {"resource": "repository", "action": "pull"}]}]}' \
+  | jq -r '"HARBOR_USERNAME: \(.name)\nHARBOR_PASSWORD: \(.secret)"'
+unset HPW
+```
+
+`project: HTTP 201`, then the robot's name (`robot$sample-app+ci`) and secret, shown once.
+*GitHub:* sample-app → Settings → Secrets and variables → Actions → add both as
+**repository secrets** `HARBOR_USERNAME` and `HARBOR_PASSWORD`.
+
+### 5. Run the pipeline
+
+*Mac:* push sample-app's `main` (or re-run its workflow in the Actions tab). Then:
+
+```bash
+kubectl -n arc-runners get pods -w        # arc-sample-app-xxxxx-runner-xxxxx: 2/2 Running, then gone
+```
+
+*GitHub:* the run is green and says it ran on `arc-sample-app`. *Mac:* Harbor → Projects →
+**sample-app** → the image with the commit's short SHA as tag, scanned.
+
+### 6. Renovate
+
+Runs at minute 17 of every hour; to run it now:
+
+```bash
+kubectl -n renovate create job renovate-now --from=cronjob/renovate
+kubectl -n renovate logs -f job/renovate-now | grep -E 'Repository|PR|ERROR|WARN' | head -40
+kubectl -n renovate delete job renovate-now
+```
+
+*GitHub:* platform-gitops and sample-app each get a **Dependency Dashboard** issue listing
+what Renovate found, and PRs for available updates (at most 5 open at a time). Review them
+like any PR: CI must be green, and chart upgrades need their release notes read first.
+
+### 7. Memory
+
+```bash
+kubectl top nodes
+kubectl top pods -n arc-systems; kubectl top pods -n arc-runners
+```
+
+### Phase 9 done when
+
+- [ ] `arc-controller`, `arc-sample-app`, `renovate` Synced + Healthy; runner set listed in GitHub
+- [ ] A sample-app workflow run builds in the cluster and pushes to Harbor, where it's scanned
+- [ ] Renovate opened its Dependency Dashboard (and update PRs) on both repos
+- [ ] Workers still have memory headroom with a build running
 
 ## Phase 8 runbook: Harbor
 
@@ -941,6 +1064,13 @@ kubectl apply -f apps/hello/hello.yaml                 # put it back
 | `podman push` to Harbor: "unauthorized" | With OIDC login the registry password is the user's **CLI secret** (User Profile), not the Keycloak password; or use a robot account |
 | Pod `ErrImagePull` from harbor.apps.lab.local: "x509: certificate signed by unknown authority" | The node doesn't trust the lab CA: run `labs/k8s/13_trust_lab_ca.yml` (again after every rebuild) |
 | Harbor registry errors writing layers (S3) | `kubectl -n harbor logs deploy/harbor-registry -c registry --tail=30`; check `kubectl -n harbor get objectbucketclaim harbor-bucket` is Bound and the Secret `harbor-bucket` exists |
+| `arc-sample-app` app `Unknown` / "No gha-rs-controller deployment found" | The scale set chart looks up the controller with Helm `lookup`, which Argo CD doesn't run: `controllerServiceAccount` must be set in `components/arc-sample-app/values.yaml` (it is) |
+| No `...-listener` pod in arc-systems | `kubectl -n arc-systems logs deploy/arc-gha-rs-controller --tail=30`. "401"/"403" from GitHub: the ARC token is wrong, expired or lacks Administration read/write on sample-app (re-seal) |
+| Workflow stays "Waiting for a runner to pick up this job" | `runs-on:` must be exactly `arc-sample-app`; check the listener pod's log (`kubectl -n arc-systems logs -l app.kubernetes.io/component=runner-scale-set-listener`) |
+| Runner pod stuck with the `buildkitd` sidecar not ready / "operation not permitted" | Rootless BuildKit needs user namespaces: on a worker `sysctl user.max_user_namespaces` must be > 0, and the sidecar keeps `seccompProfile`/`appArmorProfile: Unconfined` |
+| Build push to Harbor: "x509: certificate signed by unknown authority" | BuildKit reads the lab CA via `buildkitd-config` (`components/arc-sample-app/manifests`); check the `lab-ca-bundle` ConfigMap exists in `arc-runners` |
+| Build push to Harbor: "unauthorized" | The `HARBOR_USERNAME` / `HARBOR_PASSWORD` repository secrets in sample-app (robot account from runbook step 4; the name contains `$`, paste it exactly) |
+| Renovate job errors "Bad credentials" / no PRs | `kubectl -n renovate logs job/<name>`; the token lacks a permission (step 1 table) or expired. Repos without a `renovate.json` are skipped on purpose |
 | `argocd: command not found` | Run the admin tools playbook (Phase 3 runbook step 1) and open a new SSH session |
 
 ### Pods Evicted / DiskPressure

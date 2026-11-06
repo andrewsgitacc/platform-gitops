@@ -1,0 +1,8 @@
+# GitHub Actions Runner Controller (ARC): runs GitHub Actions jobs in pods in the cluster.
+# This is the controller; each repository's runners are a separate "runner scale set"
+# component (e.g. components/arc-sample-app).
+release: arc
+namespace: arc-systems
+repo: oci://ghcr.io/actions/actions-runner-controller-charts   # GitHub's OCI registry
+chart: gha-runner-scale-set-controller
+version: 0.15.1
