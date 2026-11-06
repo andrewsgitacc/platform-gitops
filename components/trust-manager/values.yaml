@@ -10,3 +10,12 @@ app:
 resources:
   requests: {cpu: 10m, memory: 32Mi}
   limits: {memory: 128Mi}
+
+# Harbor (Phase 8) can only take extra CAs from a Secret (caBundleSecretName), so
+# trust-manager may also write Secrets - only ones named harbor-ca-bundle. Note: enabling
+# this gives trust-manager read access to Secrets cluster-wide (writes stay limited to
+# that name); app.targetNamespaces could narrow it.
+secretTargets:
+  enabled: true
+  authorizedSecrets:
+    - harbor-ca-bundle

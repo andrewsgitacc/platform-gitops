@@ -14,3 +14,22 @@ spec:
   target:
     configMap:
       key: ca-certificates.crt
+---
+# Secret "harbor-ca-bundle" (key ca.crt) in the harbor namespace only: the lab root CA, for
+# Harbor's caBundleSecretName. Harbor adds it to the system CAs of core, jobservice,
+# registry and Trivy, so Harbor can verify https://keycloak.apps.lab.local (OIDC login).
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: harbor-ca-bundle
+spec:
+  sources:
+    - secret:
+        name: lab-root-ca
+        key: ca.crt
+  target:
+    secret:
+      key: ca.crt
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: harbor

@@ -1,0 +1,10 @@
+# S3 bucket "harbor-registry" in Ceph for the image layers. Rook creates the bucket and a
+# Secret "harbor-bucket" (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY) in this namespace.
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: harbor-bucket
+  namespace: harbor
+spec:
+  bucketName: harbor-registry
+  storageClassName: ceph-bucket
