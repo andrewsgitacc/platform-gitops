@@ -1,0 +1,51 @@
+# Keycloak at https://keycloak.apps.lab.local (route in manifests/httproute.yaml).
+# Database: CloudNativePG cluster keycloak-db (manifests/database.yaml).
+# Realm "platform" (clients, groups, users): manifests/realm.yaml, applied by keycloak-config-cli.
+
+fullnameOverride: keycloak   # Services keycloak-http / keycloak-headless
+
+args:
+  - start
+
+# Served at the root (/realms/..., /admin) rather than the chart's default /auth.
+http:
+  relativePath: "/"
+
+# Envoy terminates TLS and sends X-Forwarded-For / X-Forwarded-Proto.
+proxy:
+  enabled: true
+  mode: xforwarded
+
+extraEnv: |
+  # Public URL: used in tokens (issuer) and redirects, whatever URL a request came in on.
+  - name: KC_HOSTNAME
+    value: https://keycloak.apps.lab.local
+  # Initial admin of the "master" realm, created on first start only.
+  # LAB ONLY: plain admin / admin. Keycloak shows it as a "temporary admin".
+  - name: KC_BOOTSTRAP_ADMIN_USERNAME
+    value: admin
+  - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+    value: admin
+
+database:
+  vendor: postgres
+  hostname: keycloak-db-rw   # CloudNativePG read-write Service
+  port: 5432
+  database: keycloak
+  username: keycloak
+  existingSecret: keycloak-db-app   # created by CloudNativePG
+  existingSecretKey: password
+
+# Wait for the database port before starting Keycloak.
+dbchecker:
+  enabled: true
+
+resources:
+  requests: {cpu: 100m, memory: 768Mi}
+  limits: {memory: 1280Mi}
+
+# Metrics on the management port (9000) for Prometheus (Phase 6).
+metrics:
+  enabled: true
+serviceMonitor:
+  enabled: true

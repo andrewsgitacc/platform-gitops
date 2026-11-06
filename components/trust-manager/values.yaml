@@ -1,0 +1,12 @@
+# Source certificates (the lab root CA Secret) are read from this namespace.
+app:
+  trust:
+    namespace: cert-manager
+  metrics:
+    service:
+      servicemonitor:
+        enabled: true   # Prometheus (Phase 6)
+
+resources:
+  requests: {cpu: 10m, memory: 32Mi}
+  limits: {memory: 128Mi}

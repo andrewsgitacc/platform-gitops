@@ -24,6 +24,25 @@ configs:
       jqPathExpressions:
         - '.spec.conversion.webhook.clientConfig.caBundle'
 
+    # Single sign-on with Keycloak (Phase 7): "LOG IN VIA KEYCLOAK" on the login page.
+    # The client secret comes from the SealedSecret argocd-oidc-keycloak
+    # (manifests/argocd-oidc-sealedsecret.yaml). The built-in admin user stays enabled for
+    # the CLI and as a way in if Keycloak is down.
+    oidc.config: |
+      name: Keycloak
+      issuer: https://keycloak.apps.lab.local/realms/platform
+      clientID: argocd
+      clientSecret: $argocd-oidc-keycloak:clientSecret
+      requestedScopes: ["openid", "profile", "email"]
+      logoutURL: https://keycloak.apps.lab.local/realms/platform/protocol/openid-connect/logout?id_token_hint={{token}}&post_logout_redirect_uri={{logoutRedirectURL}}
+
+  # Keycloak group platform-admins = Argo CD admin. Other Keycloak users get no access.
+  rbac:
+    scopes: "[groups]"
+    policy.default: ""
+    policy.csv: |
+      g, platform-admins, role:admin
+
   # Envoy Gateway's chart is published as an OCI artifact; Argo CD needs the
   # registry registered with OCI enabled (no credentials - it's public).
   repositories:
@@ -33,7 +52,7 @@ configs:
       type: helm
       enableOCI: "true"
 
-# Single sign-on comes from Keycloak in Phase 7; until then the built-in admin user.
+# Single sign-on is Keycloak's OIDC directly (configs.cm oidc.config), so no Dex.
 dex:
   enabled: false
 
@@ -51,6 +70,21 @@ server:
     enabled: true
     serviceMonitor:
       enabled: true
+  # Trust the lab CA when talking to https://keycloak.apps.lab.local: the lab-ca-bundle
+  # ConfigMap (public CAs + lab CA) comes from trust-manager (components/trust-manager).
+  # Optional, so argocd-server still starts on a fresh cluster before trust-manager runs.
+  env:
+    - name: SSL_CERT_FILE
+      value: /etc/ssl/lab/ca-certificates.crt
+  volumes:
+    - name: lab-ca-bundle
+      configMap:
+        name: lab-ca-bundle
+        optional: true
+  volumeMounts:
+    - name: lab-ca-bundle
+      mountPath: /etc/ssl/lab
+      readOnly: true
 repoServer:
   metrics:
     enabled: true

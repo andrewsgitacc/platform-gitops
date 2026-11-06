@@ -1,0 +1,8 @@
+# Distributes the lab CA to every namespace (ConfigMap lab-ca-bundle), so pods can trust
+# https://*.apps.lab.local. The CA is created by cert-manager inside the cluster and
+# changes on every rebuild, so it can't be stored in Git.
+release: trust-manager
+namespace: cert-manager   # trust-manager reads source Secrets from its "trust namespace"
+repo: https://charts.jetstack.io
+chart: trust-manager
+version: v0.26.0

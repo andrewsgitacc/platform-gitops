@@ -1,0 +1,155 @@
+# The "platform" realm as code: login for the platform UIs.
+#
+# keycloak-config-cli (the Job below) applies this file to Keycloak after every Argo CD
+# sync of this component, so changes made here in Git reach Keycloak. It only removes
+# things it created itself; changes made by hand in the admin console to other objects
+# are left alone.
+#
+# $(env:...) values come from the SealedSecret keycloak-realm-secrets
+# (realm-secrets-sealedsecret.yaml, made by scripts/seal-keycloak-secrets.sh).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-realm
+  namespace: keycloak
+data:
+  platform-realm.yaml: |
+    realm: platform
+    displayName: Platform lab
+    enabled: true
+    sslRequired: external
+
+    groups:
+      - name: platform-admins    # admin in Argo CD and Grafana
+
+    users:
+      - username: admin          # the platform's admin user (not Keycloak's master-realm admin)
+        enabled: true
+        firstName: Platform
+        lastName: Admin
+        email: admin@lab.local
+        emailVerified: true
+        credentials:
+          - type: password
+            value: $(env:ADMIN_PASSWORD)
+            temporary: false
+        groups:
+          - /platform-admins
+
+    clients:
+      - clientId: argocd
+        name: Argo CD
+        enabled: true
+        protocol: openid-connect
+        publicClient: false
+        clientAuthenticatorType: client-secret
+        secret: $(env:ARGOCD_CLIENT_SECRET)
+        standardFlowEnabled: true
+        directAccessGrantsEnabled: false
+        rootUrl: https://argocd.apps.lab.local
+        redirectUris:
+          - https://argocd.apps.lab.local/auth/callback
+        webOrigins:
+          - https://argocd.apps.lab.local
+        attributes:
+          post.logout.redirect.uris: https://argocd.apps.lab.local/*
+        protocolMappers:
+          # Adds the user's groups (e.g. "platform-admins") to the tokens and userinfo.
+          - name: groups
+            protocol: openid-connect
+            protocolMapper: oidc-group-membership-mapper
+            config:
+              claim.name: groups
+              full.path: "false"
+              id.token.claim: "true"
+              access.token.claim: "true"
+              userinfo.token.claim: "true"
+              introspection.token.claim: "true"
+
+      - clientId: grafana
+        name: Grafana
+        enabled: true
+        protocol: openid-connect
+        publicClient: false
+        clientAuthenticatorType: client-secret
+        secret: $(env:GRAFANA_CLIENT_SECRET)
+        standardFlowEnabled: true
+        directAccessGrantsEnabled: false
+        rootUrl: https://grafana.apps.lab.local
+        redirectUris:
+          - https://grafana.apps.lab.local/login/generic_oauth
+        webOrigins:
+          - https://grafana.apps.lab.local
+        attributes:
+          post.logout.redirect.uris: https://grafana.apps.lab.local/login
+          pkce.code.challenge.method: S256
+        protocolMappers:
+          # Same groups mapper as argocd.
+          - name: groups
+            protocol: openid-connect
+            protocolMapper: oidc-group-membership-mapper
+            config:
+              claim.name: groups
+              full.path: "false"
+              id.token.claim: "true"
+              access.token.claim: "true"
+              userinfo.token.claim: "true"
+              introspection.token.claim: "true"
+---
+# Applies the realm above. Runs after every sync of this component (Argo CD PostSync
+# hook), once Keycloak is healthy; the previous run's Job is deleted first.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keycloak-config
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 4
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: keycloak-config-cli
+          # <cli version>-<Keycloak major>: built against the newest Keycloak 26.x it supports.
+          image: docker.io/adorsys/keycloak-config-cli:6.5.1-26
+          env:
+            # Straight to the Service (plain HTTP inside the cluster, no gateway or CA).
+            - name: KEYCLOAK_URL
+              value: http://keycloak-http.keycloak.svc
+            - name: KEYCLOAK_USER
+              value: admin
+            - name: KEYCLOAK_PASSWORD
+              value: admin   # LAB ONLY: the bootstrap admin from values.yaml
+            - name: KEYCLOAK_AVAILABILITYCHECK_ENABLED
+              value: "true"
+            - name: KEYCLOAK_AVAILABILITYCHECK_TIMEOUT
+              value: 300s
+            - name: IMPORT_FILES_LOCATIONS
+              value: /config/*
+            - name: IMPORT_VARSUBSTITUTION_ENABLED
+              value: "true"
+            - name: ARGOCD_CLIENT_SECRET
+              valueFrom: {secretKeyRef: {name: keycloak-realm-secrets, key: argocd-client-secret}}
+            - name: GRAFANA_CLIENT_SECRET
+              valueFrom: {secretKeyRef: {name: keycloak-realm-secrets, key: grafana-client-secret}}
+            - name: ADMIN_PASSWORD
+              valueFrom: {secretKeyRef: {name: keycloak-realm-secrets, key: admin-password}}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: realm, mountPath: /config, readOnly: true}
+      volumes:
+        - name: realm
+          configMap:
+            name: keycloak-realm

@@ -1,0 +1,7 @@
+# Single sign-on for the platform UIs: https://keycloak.apps.lab.local
+# codecentric's keycloakx chart runs the official Keycloak image (quay.io/keycloak/keycloak).
+release: keycloak
+namespace: keycloak
+repo: https://codecentric.github.io/helm-charts
+chart: keycloakx
+version: 7.4.0   # Keycloak 26.8.1

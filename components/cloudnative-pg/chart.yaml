@@ -1,0 +1,7 @@
+# PostgreSQL operator: databases are declared as "Cluster" resources next to the app that
+# uses them (Keycloak in Phase 7, Harbor in Phase 8).
+release: cnpg
+namespace: cnpg-system
+repo: https://cloudnative-pg.github.io/charts
+chart: cloudnative-pg
+version: 0.29.1   # operator 1.30.1
