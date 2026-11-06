@@ -1,0 +1,32 @@
+# Harbor's PostgreSQL, run by CloudNativePG (components/cloudnative-pg), like Keycloak's.
+# CloudNativePG creates Service harbor-db-rw and Secret harbor-db-app (password).
+# No database backups yet: Velero in Phase 11.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: harbor-db
+  namespace: harbor
+spec:
+  instances: 1
+  bootstrap:
+    initdb:
+      database: registry
+      owner: harbor
+  storage:
+    storageClass: ceph-block
+    size: 2Gi
+  resources:
+    requests: {cpu: 50m, memory: 256Mi}
+    limits: {memory: 512Mi}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: harbor-db
+  namespace: harbor
+spec:
+  selector:
+    matchLabels:
+      cnpg.io/cluster: harbor-db
+  podMetricsEndpoints:
+    - port: metrics

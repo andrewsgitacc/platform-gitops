@@ -5,8 +5,9 @@
 # things it created itself; changes made by hand in the admin console to other objects
 # are left alone.
 #
-# $(env:...) values come from the SealedSecret keycloak-realm-secrets
-# (realm-secrets-sealedsecret.yaml, made by scripts/seal-keycloak-secrets.sh).
+# $(env:...) values come from the SealedSecrets keycloak-realm-secrets
+# (realm-secrets-sealedsecret.yaml, scripts/seal-keycloak-secrets.sh) and keycloak-harbor-client
+# (harbor-client-sealedsecret.yaml, scripts/seal-harbor-secrets.sh).
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -95,6 +96,36 @@ data:
               access.token.claim: "true"
               userinfo.token.claim: "true"
               introspection.token.claim: "true"
+
+      # Harbor (Phase 8). Secret from keycloak-harbor-client (scripts/seal-harbor-secrets.sh).
+      - clientId: harbor
+        name: Harbor
+        enabled: true
+        protocol: openid-connect
+        publicClient: false
+        clientAuthenticatorType: client-secret
+        secret: $(env:HARBOR_CLIENT_SECRET)
+        standardFlowEnabled: true
+        directAccessGrantsEnabled: false
+        rootUrl: https://harbor.apps.lab.local
+        redirectUris:
+          - https://harbor.apps.lab.local/c/oidc/callback
+        webOrigins:
+          - https://harbor.apps.lab.local
+        attributes:
+          post.logout.redirect.uris: https://harbor.apps.lab.local/*
+        protocolMappers:
+          # Same groups mapper as argocd.
+          - name: groups
+            protocol: openid-connect
+            protocolMapper: oidc-group-membership-mapper
+            config:
+              claim.name: groups
+              full.path: "false"
+              id.token.claim: "true"
+              access.token.claim: "true"
+              userinfo.token.claim: "true"
+              introspection.token.claim: "true"
 ---
 # Applies the realm above. Runs after every sync of this component (Argo CD PostSync
 # hook), once Keycloak is healthy; the previous run's Job is deleted first.
@@ -141,6 +172,8 @@ spec:
               valueFrom: {secretKeyRef: {name: keycloak-realm-secrets, key: grafana-client-secret}}
             - name: ADMIN_PASSWORD
               valueFrom: {secretKeyRef: {name: keycloak-realm-secrets, key: admin-password}}
+            - name: HARBOR_CLIENT_SECRET
+              valueFrom: {secretKeyRef: {name: keycloak-harbor-client, key: client-secret}}
           resources:
             requests: {cpu: 100m, memory: 256Mi}
             limits: {memory: 512Mi}

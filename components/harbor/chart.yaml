@@ -1,0 +1,6 @@
+# Container registry with Trivy vulnerability scanning: https://harbor.apps.lab.local
+release: harbor
+namespace: harbor
+repo: https://helm.goharbor.io
+chart: harbor
+version: 1.19.4   # made for Harbor v2.15.4; images overridden to v2.16.0-rc1 (values.yaml)
