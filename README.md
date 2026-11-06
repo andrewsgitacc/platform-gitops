@@ -82,7 +82,7 @@ decrypts them, so they're safe in a public repo.
   sealed by `scripts/seal-external-dns-secret.sh` from `/etc/named/externaldns.key` on the
   utility server.
 - **Keycloak SSO secrets** (Phase 7): the OIDC client secrets for Argo CD and Grafana and
-  your Keycloak user's password, sealed by `scripts/seal-keycloak-secrets.sh` into
+  the Keycloak `admin` user's password, sealed by `scripts/seal-keycloak-secrets.sh` into
   `components/keycloak/manifests/realm-secrets-sealedsecret.yaml`,
   `components/argocd/manifests/argocd-oidc-sealedsecret.yaml` and
   `components/kube-prometheus-stack/manifests/grafana-oidc-sealedsecret.yaml` (one set: re-run
@@ -119,7 +119,7 @@ The utility server's copy is only ever updated with `git pull`; changes are made
 Keycloak (https://keycloak.apps.lab.local) becomes the login for **Argo CD** and **Grafana**.
 New components: **trust-manager** (shares the lab CA with pods, so Argo CD and Grafana can
 call Keycloak over HTTPS), **CloudNativePG** (Keycloak's PostgreSQL) and **Keycloak**. The
-realm `platform` (clients, the group `platform-admins`, your user `andrew`) is in Git
+realm `platform` (clients, the group `platform-admins`, the user `admin`) is in Git
 (`components/keycloak/manifests/realm.yaml`) and applied by keycloak-config-cli after every
 sync. The built-in `admin` logins of Argo CD and Grafana keep working as a way in.
 Commands run on the **utility server** unless marked *Mac*.
@@ -132,7 +132,7 @@ script is on the branch, so check it out on the utility server for a moment:
 
 ```bash
 cd ~/platform-gitops && git fetch && git checkout phase-7-keycloak
-./scripts/seal-keycloak-secrets.sh      # asks for a password for your Keycloak user "andrew"
+./scripts/seal-keycloak-secrets.sh      # asks for a password for the Keycloak user "admin"
 git checkout main
 ```
 
@@ -180,18 +180,20 @@ curl -s https://keycloak.apps.lab.local/realms/platform/.well-known/openid-confi
 
 *Mac:* **https://keycloak.apps.lab.local/admin**, log in **admin / admin** (master realm,
 **lab only**; Keycloak warns it's a temporary admin). Switch to the realm **platform**:
-clients `argocd` and `grafana`, group `platform-admins`, user `andrew`.
+clients `argocd` and `grafana`, group `platform-admins`, user `admin`.
 
 ### 5. Argo CD login
 
-*Mac:* **https://argocd.apps.lab.local** → **LOG IN VIA KEYCLOAK** → `andrew` and your
-password. You land in Argo CD with full access; **User Info** shows the group
+*Mac:* **https://argocd.apps.lab.local** → **LOG IN VIA KEYCLOAK** → `admin` and the
+password you chose in step 1. You land in Argo CD with full access; **User Info** shows the group
 `platform-admins`. The CLI still uses the built-in admin (`argocd login argocd.apps.lab.local --grpc-web`).
 
 ### 6. Grafana login
 
 *Mac:* **https://grafana.apps.lab.local** → **Sign in with Keycloak** → you're in as
-`andrew` with the **Admin** role (Administration → Users and access → Users). Users outside
+`admin` with the **Admin** role (Administration → Users and access → Users). Grafana matches
+it to its existing local `admin` account by login name, so it's the same Grafana user
+whichever way you sign in. Users outside
 `platform-admins` get **Viewer**.
 
 ### 7. Metrics and memory
@@ -209,8 +211,8 @@ kubectl top pods -n keycloak
 
 - [ ] All Applications Synced + Healthy; `lab-ca-bundle` in every namespace
 - [ ] `keycloak-db` healthy, `keycloak-0` Ready, `keycloak-config` Job completed
-- [ ] Argo CD: Keycloak login as `andrew` with admin rights
-- [ ] Grafana: Keycloak login as `andrew` with the Admin role
+- [ ] Argo CD: Keycloak login as `admin` with admin rights
+- [ ] Grafana: Keycloak login as `admin` with the Admin role
 - [ ] Keycloak, its database, CloudNativePG and trust-manager scraped by Prometheus
 - [ ] Workers still have memory headroom
 

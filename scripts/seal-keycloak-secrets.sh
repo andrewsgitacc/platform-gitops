@@ -3,7 +3,7 @@
 # Run on the utility server (dns.lab.local). Writes three SealedSecrets to ~/keycloak-sealed/:
 #
 #   realm-secrets-sealedsecret.yaml  -> components/keycloak/manifests/
-#       keycloak/keycloak-realm-secrets: both OIDC client secrets + your Keycloak password
+#       keycloak/keycloak-realm-secrets: both OIDC client secrets + the Keycloak admin user's password
 #   argocd-oidc-sealedsecret.yaml    -> components/argocd/manifests/
 #       argocd/argocd-oidc-keycloak: Argo CD's client secret
 #   grafana-oidc-sealedsecret.yaml   -> components/kube-prometheus-stack/manifests/
@@ -18,7 +18,7 @@ set -euo pipefail
 OUT="$HOME/keycloak-sealed"
 mkdir -p "$OUT"
 
-read -rsp "Password for your Keycloak user 'andrew': " PW; echo
+read -rsp "Password for the Keycloak user 'admin' (realm platform): " PW; echo
 read -rsp "Same again: " PW2; echo
 [[ -n "$PW" && "$PW" == "$PW2" ]] || { echo "Passwords empty or don't match" >&2; exit 1; }
 
@@ -31,11 +31,11 @@ header() {
 }
 
 {
-  header "Keycloak realm secrets (OIDC client secrets, andrew's password)"
+  header "Keycloak realm secrets (OIDC client secrets, the admin user's password)"
   kubectl create secret generic keycloak-realm-secrets --namespace keycloak \
     --from-literal=argocd-client-secret="$ARGOCD_SECRET" \
     --from-literal=grafana-client-secret="$GRAFANA_SECRET" \
-    --from-literal=andrew-password="$PW" \
+    --from-literal=admin-password="$PW" \
     --dry-run=client -o yaml | kubeseal --format yaml
 } > "$OUT/realm-secrets-sealedsecret.yaml"
 

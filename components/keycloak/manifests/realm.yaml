@@ -23,15 +23,15 @@ data:
       - name: platform-admins    # admin in Argo CD and Grafana
 
     users:
-      - username: andrew
+      - username: admin          # the platform's admin user (not Keycloak's master-realm admin)
         enabled: true
-        firstName: Andrew
-        lastName: Kyle
-        email: andrew@lab.local
+        firstName: Platform
+        lastName: Admin
+        email: admin@lab.local
         emailVerified: true
         credentials:
           - type: password
-            value: $(env:ANDREW_PASSWORD)
+            value: $(env:ADMIN_PASSWORD)
             temporary: false
         groups:
           - /platform-admins
@@ -139,8 +139,8 @@ spec:
               valueFrom: {secretKeyRef: {name: keycloak-realm-secrets, key: argocd-client-secret}}
             - name: GRAFANA_CLIENT_SECRET
               valueFrom: {secretKeyRef: {name: keycloak-realm-secrets, key: grafana-client-secret}}
-            - name: ANDREW_PASSWORD
-              valueFrom: {secretKeyRef: {name: keycloak-realm-secrets, key: andrew-password}}
+            - name: ADMIN_PASSWORD
+              valueFrom: {secretKeyRef: {name: keycloak-realm-secrets, key: admin-password}}
           resources:
             requests: {cpu: 100m, memory: 256Mi}
             limits: {memory: 512Mi}
