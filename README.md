@@ -124,12 +124,14 @@ kubectl -n monitoring get objectbucketclaim         # loki-bucket Bound
 ### 2. Prometheus is scraping everything
 
 *Mac:* open **https://prometheus.apps.lab.local** → Status → Targets. Everything should be
-**UP**, including `rook-ceph`, `argocd-*` and `cert-manager`. Or on the utility server:
+**UP**, including `rook-ceph`, `argocd-*` and `cert-manager`. Or on the utility server,
+through the Kubernetes API server's service proxy (the Prometheus, Alertmanager and Loki
+images have no `wget` or `curl`, so `kubectl exec ... wget` doesn't work):
 
 ```bash
-kubectl -n monitoring exec prometheus-kube-prometheus-stack-prometheus-0 -c prometheus -- \
-  wget -qO- 'http://localhost:9090/api/v1/targets?state=active' \
-  | jq -r '.data.activeTargets[] | select(.health!="up") | "\(.labels.job) \(.health) \(.lastError)"'
+P=/api/v1/namespaces/monitoring/services
+kubectl get --raw "$P/kube-prometheus-stack-prometheus:9090/proxy/api/v1/targets?state=active" \
+  | jq -r '.data.activeTargets[] | select(.health!="up") | "\(.labels.job) \(.lastError)"'
 # no output = every target up
 ```
 
@@ -137,6 +139,13 @@ kubectl -n monitoring exec prometheus-kube-prometheus-stack-prometheus-0 -c prom
 
 *Mac:* **https://alertmanager.apps.lab.local**. Expect only **Watchdog** (an always-firing
 "alerting works" heartbeat) and possibly **InfoInhibitor**. Anything else is worth a look.
+From the utility server:
+
+```bash
+kubectl get --raw "$P/kube-prometheus-stack-prometheus:9090/proxy/api/v1/alerts" \
+  | jq -r '.data.alerts[] | select(.state=="firing") | .labels.alertname' | sort | uniq -c
+#   1 Watchdog
+```
 
 ### 4. Grafana
 
@@ -152,14 +161,19 @@ off (`disable_brute_force_login_protection`, **lab only**). Check:
 
 ### 5. Logs
 
-In Grafana: **Explore** → data source **Loki** → query `{namespace="hello"}` → logs from the
-hello app. Try `{namespace="rook-ceph", container="mgr"}` or `{app="argocd-server"}`.
+In Grafana: **Explore** → data source **Loki** → query `{namespace="argocd"}` → Argo CD's
+logs (it logs constantly). Try `{namespace="rook-ceph", container="mgr"}`. The hello app
+(podinfo) only logs when it starts or stops, so `{namespace="hello"}` is often empty for the
+default last hour: widen the time range.
 
 From the utility server:
 
 ```bash
-kubectl -n monitoring exec loki-0 -c loki -- wget -qO- 'http://localhost:3100/loki/api/v1/labels' | jq -r '.data[]'
-# namespace, pod, container, app, node ...
+kubectl get --raw "$P/loki:3100/proxy/loki/api/v1/labels" | jq -r '.data[]'
+# app container instance job namespace node pod service_name
+kubectl get --raw "$P/loki:3100/proxy/loki/api/v1/query_range?query=%7Bnamespace%3D%22argocd%22%7D&limit=3" \
+  | jq -r '.data.result[].values[][1]'
+# recent Argo CD log lines (add &since=72h for older logs)
 ```
 
 Logs are stored in Ceph: `kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket loki-data | jq '.usage'`
@@ -172,13 +186,17 @@ kubectl top nodes
 kubectl top pods -n monitoring --sort-by=memory
 ```
 
+Measured after Phase 6: workers ~5.6 GB each (~59%), ~17 GB in total; Prometheus ~1.4 GB,
+Grafana ~0.5 GB, Loki ~0.25 GB, Alloy 70–200 MB per node. Control planes 2.3–3 GB of their
+4 GB (66–85%).
+
 ### Phase 6 done when
 
 - [ ] All Applications Synced + Healthy; monitoring PVCs and the Loki bucket Bound
 - [ ] Every Prometheus target UP (Ceph, Argo CD, cert-manager included)
 - [ ] Only Watchdog (and InfoInhibitor) firing in Alertmanager
 - [ ] Grafana: Kubernetes, Ceph and Argo CD dashboards show data
-- [ ] Loki: `{namespace="hello"}` returns logs in Grafana Explore
+- [ ] Loki: `{namespace="argocd"}` returns logs in Grafana Explore
 - [ ] Workers still have memory headroom
 
 ## Phase 5 runbook: Rook-Ceph storage
@@ -634,6 +652,8 @@ kubectl apply -f apps/hello/hello.yaml                 # put it back
 | Pods `OOMKilled` / `Pending` "Insufficient memory" after Ceph | Worker RAM is full: `kubectl top nodes`. Raise workers to 12 GB (labs/platform → MacBook requirements) |
 | Grafana / Prometheus pod `Pending` | Its PVC isn't bound: `kubectl -n monitoring get pvc`, `kubectl -n monitoring describe pvc <name>`. Check Ceph and the CSI drivers (Phase 5) |
 | Prometheus target DOWN | Prometheus → Status → Targets shows the error. TLS/403 on kubelet: chart default handles it. etcd/scheduler/controller-manager/kube-proxy are deliberately not scraped (kubeadm binds them to 127.0.0.1) |
+| `kubectl exec ... wget`: "executable file not found in $PATH" | The Prometheus, Alertmanager and Loki images have no shell tools. Query them through the API server instead: `kubectl get --raw /api/v1/namespaces/monitoring/services/<service>:<port>/proxy/<path>` (see the Phase 6 runbook) |
+| Loki query `{namespace="hello"}` returns nothing | The hello app (podinfo) only logs at start-up and shutdown. Widen the time range, or check a busy namespace such as `{namespace="argocd"}` |
 | No logs in Grafana (Loki) | `kubectl -n monitoring logs ds/alloy --tail=20` (push errors?) and `kubectl -n monitoring logs loki-0 -c loki --tail=30` (S3 errors: check `kubectl -n monitoring get objectbucketclaim loki-bucket` and that the Secret `loki-bucket` exists) |
 | Grafana Ceph dashboard mostly N/A / "No data" but Status shows | Dashboard written for older Ceph metric names. Use Ceph's own dashboards from the Ceph source at the running Ceph version (`url:` in the kube-prometheus-stack values), not old grafana.com uploads |
 | Grafana Ceph/Argo CD dashboards empty | The dashboard's Prometheus job names may differ from the dashboard's queries; check the panel's query in Explore. Rook: `monitoring.enabled` in both rook-ceph components |
