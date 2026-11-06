@@ -213,6 +213,9 @@ half-way can leave `keycloak` waiting for a database that was never created (Tro
 restart `argocd-server` and Grafana once `lab-ca-bundle` exists; Argo CD shows the Keycloak
 user by its email (`admin@lab.local`), and Grafana links Keycloak's `admin` to its local `admin`.
 
+Measured after Phase 7: Keycloak ~610 MB, its database ~110 MB, the CloudNativePG operator
+~60 MB; workers ~5.4 GB each (~57%), control planes 3–3.7 GB of their 6 GB.
+
 ### Phase 7 done when
 
 - [ ] All Applications Synced + Healthy; `lab-ca-bundle` in every namespace
