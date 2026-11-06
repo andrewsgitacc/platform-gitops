@@ -207,6 +207,15 @@ kubectl top nodes
 kubectl top pods -n keycloak
 ```
 
+Lessons from the build: the 4 GB control planes **ran out of memory** when CloudNativePG's
+CRDs arrived, so they now have 6 GB (labs/k8s `12_resize_vm_memory.yml`); a sync that fails
+half-way can leave `keycloak` waiting for a database that was never created (Troubleshooting);
+restart `argocd-server` and Grafana once `lab-ca-bundle` exists; Argo CD shows the Keycloak
+user by its email (`admin@lab.local`), and Grafana links Keycloak's `admin` to its local `admin`.
+
+Measured after Phase 7: Keycloak ~610 MB, its database ~110 MB, the CloudNativePG operator
+~60 MB; workers ~5.4 GB each (~57%), control planes 3–3.7 GB of their 6 GB.
+
 ### Phase 7 done when
 
 - [ ] All Applications Synced + Healthy; `lab-ca-bundle` in every namespace
@@ -776,6 +785,8 @@ kubectl apply -f apps/hello/hello.yaml                 # put it back
 | Argo CD or Grafana Keycloak login: "x509: certificate signed by unknown authority" | The pod can't verify the lab CA. Check `kubectl -n argocd get configmap lab-ca-bundle` (and `-n monitoring`); if it's there, the pod started before it: `kubectl -n argocd rollout restart deployment argocd-server` / `kubectl -n monitoring rollout restart deployment kube-prometheus-stack-grafana`. No ConfigMap: `kubectl describe bundle lab-ca-bundle`, `kubectl -n cert-manager logs deploy/trust-manager` |
 | Keycloak page "Invalid parameter: redirect_uri" or "Invalid client credentials" | The realm wasn't applied, or the secrets don't match. `kubectl -n keycloak logs job/keycloak-config`; check the three sealed files came from the same run of `seal-keycloak-secrets.sh` |
 | `keycloak-config` Job failed / Argo CD shows the `keycloak` sync failed in PostSync | `kubectl -n keycloak logs job/keycloak-config`. "secret keycloak-realm-secrets not found": the sealed file isn't committed. 401: the master admin password isn't `admin` (changed in the console?). Fix, then Argo CD → keycloak → Sync to re-run it |
+| `keycloak` app stuck "Running: waiting for healthy state of apps/StatefulSet/keycloak", `Cluster/keycloak-db` OutOfSync, `keycloak-0` stuck in `Init:0/1` | The database was never created (its first create failed, e.g. while the API servers were down) and the sync now waits for Keycloak, which waits for the database. Create it from Git: `kubectl apply --server-side -f components/keycloak/manifests/database.yaml`; the sync then completes and Argo CD adopts it |
+| `kubectl` / Argo CD: "TLS handshake timeout", "couldn't get current server API group list" | A control plane's API server is out of memory. See [labs/k8s → Control plane out of memory](https://github.com/andrewsgitacc/labs/tree/main/k8s#control-plane-out-of-memory-tls-handshake-timeout); afterwards look for Applications with failed or stuck syncs |
 | `keycloak-0` not Ready / restarting | `kubectl -n keycloak logs keycloak-0 --tail=50`. Database errors: `kubectl -n keycloak get cluster keycloak-db` and `kubectl -n keycloak logs keycloak-db-1`. First start takes 1–2 minutes (startup probe allows 5) |
 | Argo CD Keycloak login works but no applications / "permission denied" | The `groups` claim is missing or the user isn't in `platform-admins`: Argo CD → User Info shows the groups. RBAC is `g, platform-admins, role:admin` in `components/argocd/values.yaml` |
 | Grafana Keycloak user is only Viewer | Same: no `platform-admins` in the `groups` claim. Grafana re-evaluates the role at every login |
