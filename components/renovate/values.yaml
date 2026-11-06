@@ -1,0 +1,36 @@
+# Hourly, at minute 17 (avoids the top of the hour, when GitHub's API is busiest).
+cronjob:
+  schedule: "17 * * * *"
+  timeZone: Australia/Sydney
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: "3"
+  failedJobsHistoryLimit: "3"
+
+# RENOVATE_TOKEN: a fine-grained personal access token, from the SealedSecret
+# renovate-token (manifests/renovate-token-sealedsecret.yaml, scripts/seal-ci-secrets.sh).
+existingSecret: renovate-token
+
+renovate:
+  # Global settings. What to update in each repository is in that repository's
+  # renovate.json; repositories without one are skipped.
+  config: |
+    {
+      "platform": "github",
+      "repositories": [
+        "andrewsgitacc/platform-gitops",
+        "andrewsgitacc/sample-app"
+      ],
+      "onboarding": false,
+      "requireConfig": "required",
+      "dependencyDashboard": true
+    }
+  # Keep the package cache between runs (faster, fewer registry lookups).
+  persistence:
+    cache:
+      enabled: true
+      storageClass: ceph-block
+      storageSize: 2Gi
+
+resources:
+  requests: {cpu: 200m, memory: 512Mi}
+  limits: {memory: 2Gi}

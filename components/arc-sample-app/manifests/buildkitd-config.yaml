@@ -1,0 +1,11 @@
+# BuildKit settings for the runner pods: trust the lab CA when pushing to and pulling
+# from Harbor (https://harbor.apps.lab.local).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: buildkitd-config
+  namespace: arc-runners
+data:
+  buildkitd.toml: |
+    [registry."harbor.apps.lab.local"]
+      ca = ["/etc/lab-ca/ca-certificates.crt"]

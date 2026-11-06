@@ -1,0 +1,11 @@
+# Fixed service account name: the runner scale sets point at it (controllerServiceAccount),
+# because the chart's own discovery uses Helm "lookup", which Argo CD doesn't support.
+serviceAccount:
+  name: arc-controller
+
+flags:
+  logLevel: info
+
+resources:
+  requests: {cpu: 20m, memory: 64Mi}
+  limits: {memory: 256Mi}

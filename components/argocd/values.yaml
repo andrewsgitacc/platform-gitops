@@ -43,12 +43,18 @@ configs:
     policy.csv: |
       g, platform-admins, role:admin
 
-  # Envoy Gateway's chart is published as an OCI artifact; Argo CD needs the
-  # registry registered with OCI enabled (no credentials - it's public).
+  # Charts published as OCI artifacts (Envoy Gateway, ARC): Argo CD needs each registry
+  # registered with OCI enabled (no credentials - they're public).
   repositories:
     envoyproxy-oci:
       name: envoyproxy
       url: registry-1.docker.io/envoyproxy
+      type: helm
+      enableOCI: "true"
+    # GitHub Actions Runner Controller charts (Phase 9), on GitHub's OCI registry.
+    arc-oci:
+      name: actions-runner-controller-charts
+      url: ghcr.io/actions/actions-runner-controller-charts
       type: helm
       enableOCI: "true"
 
