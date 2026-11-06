@@ -100,12 +100,24 @@ fi
 unset ADMIN_PW PW2 REGISTRY_PW CLIENT_SECRET OIDC_JSON
 ls -l "$OUT"
 
+if $TOKEN_ONLY; then
 cat <<'MSG'
 
-Next, on the Mac (on the phase-8-harbor branch):
+Next, on the Mac (on your branch), copy only the new token file:
   cd ~/GitHub/platform-gitops
-  scp admin@172.16.79.10:harbor-sealed/harbor-secrets-sealedsecret.yaml components/harbor/manifests/
   scp admin@172.16.79.10:harbor-sealed/harbor-token-sealedsecret.yaml components/harbor/manifests/
-  scp admin@172.16.79.10:harbor-sealed/harbor-client-sealedsecret.yaml components/keycloak/manifests/
   then commit and push.
+MSG
+exit 0
+fi
+
+cat <<'MSG'
+
+Next, on the Mac (on your branch), one scp for all three files:
+  cd ~/GitHub/platform-gitops
+  scp -r admin@172.16.79.10:harbor-sealed /tmp/
+  cp /tmp/harbor-sealed/harbor-{secrets,token}-sealedsecret.yaml components/harbor/manifests/
+  cp /tmp/harbor-sealed/harbor-client-sealedsecret.yaml components/keycloak/manifests/
+  rm -rf /tmp/harbor-sealed
+  then commit and push - and merge only once the pull request shows that commit.
 MSG

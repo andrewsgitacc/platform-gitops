@@ -235,6 +235,19 @@ kubectl top nodes
 kubectl top pods -n harbor
 ```
 
+Lessons from the build: Harbor publishes **arm64 images only from v2.16** (check every image
+with Docker Hub's API before choosing a version); OpenSSL 3 writes **PKCS#8** keys but Harbor's
+token service needs **PKCS#1** (`podman login` → 500, "unable to get PrivateKey from PEM type:
+PRIVATE KEY"); the sealed-secrets commit was pushed **after** the PR was merged, so Harbor
+started without its secrets (now: merge only when the PR shows it); an **empty sealed file**
+from a failed script run was merged and Argo CD pruned the secret (CI now rejects incomplete
+sealed files); Argo CD can't apply a new Secret to an app whose sync is stuck waiting for
+that Secret (apply the sealed file by hand once); with Keycloak login the registry password
+is the user's **CLI secret**; the 2.16 login button is "LOGIN WITH Keycloak".
+
+Measured after Phase 8: Harbor and its database ~0.3 GB at rest (Trivy grows while
+scanning); workers 5.6–6.5 GB each (60–69%, ~17.7 GB in total), control planes 62–70%.
+
 ### Phase 8 done when
 
 - [ ] All Applications Synced + Healthy; `harbor-db`, the bucket and all Harbor pods up
