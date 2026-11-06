@@ -24,6 +24,18 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # An empty or truncated sealed file would make Argo CD delete the secret (prune).
+      - name: Sealed secrets are complete
+        run: |
+          set -euo pipefail
+          bad=0
+          for f in $(git ls-files '*sealedsecret*.yaml'); do
+            if ! grep -q '^kind: SealedSecret' "$f" || ! grep -q 'encryptedData:' "$f"; then
+              echo "::error file=$f::not a complete SealedSecret (empty or truncated?)"; bad=1
+            fi
+          done
+          exit $bad
+
       - name: Install kubeconform
         run: |
           curl -sSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
