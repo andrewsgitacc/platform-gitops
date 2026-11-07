@@ -4,4 +4,4 @@ release: rook-ceph
 namespace: rook-ceph
 repo: https://charts.rook.io/release
 chart: rook-ceph
-version: v1.21.1   # keep rook-ceph-cluster at the same version
+version: v1.21.2   # keep rook-ceph-cluster at the same version
