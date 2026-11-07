@@ -12,7 +12,9 @@ existingSecret: renovate-token
 
 renovate:
   # Global settings. What to update in each repository is in that repository's
-  # renovate.json; repositories without one are skipped.
+  # renovate.json; repositories without one are skipped. platformCommit: commits are made
+  # through GitHub's API, so they're attributed to the token's owner and shown as Verified
+  # (otherwise Renovate's default author email, owned by Mend, shows them as Unverified).
   config: |
     {
       "platform": "github",
@@ -22,7 +24,8 @@ renovate:
       ],
       "onboarding": false,
       "requireConfig": "required",
-      "dependencyDashboard": true
+      "dependencyDashboard": true,
+      "platformCommit": "enabled"
     }
   # Keep the package cache between runs (faster, fewer registry lookups).
   persistence:

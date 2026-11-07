@@ -238,6 +238,18 @@ kubectl top nodes
 kubectl top pods -n arc-systems; kubectl top pods -n arc-runners
 ```
 
+Lessons from the build: the Renovate token also needs **Pull requests: Read and write** —
+without it Renovate pushes branches but can't open PRs ("Errored" on the dashboard);
+Harbor's scan of the first sample-app image found **47** fixable vulnerabilities, all in Go
+1.24's standard library, and Renovate's golang 1.27 PR brought it to **4** negligible ones — the
+loop this phase builds (scan → update PR → CI → rescan); Argo CD picks up a merged chart
+update within ~3 minutes (`argocd.argoproj.io/refresh` annotation to hurry it); Renovate's
+default author email is Mend's, so commits showed as Unverified until `platformCommit`.
+
+Measured after Phase 9 (idle): ARC controller + listener ~50 MB, Renovate only runs hourly;
+workers 5.7–6.7 GB each (59–70%, ~18.4 GB in total). A build adds a runner pod of up to
+~2.5 GB (runner + BuildKit) for a minute or two.
+
 ### Phase 9 done when
 
 - [ ] `arc-controller`, `arc-sample-app`, `renovate` Synced + Healthy; runner set listed in GitHub
@@ -1070,6 +1082,8 @@ kubectl apply -f apps/hello/hello.yaml                 # put it back
 | Runner pod stuck with the `buildkitd` sidecar not ready / "operation not permitted" | Rootless BuildKit needs user namespaces: on a worker `sysctl user.max_user_namespaces` must be > 0, and the sidecar keeps `seccompProfile`/`appArmorProfile: Unconfined` |
 | Build push to Harbor: "x509: certificate signed by unknown authority" | BuildKit reads the lab CA via `buildkitd-config` (`components/arc-sample-app/manifests`); check the `lab-ca-bundle` ConfigMap exists in `arc-runners` |
 | Build push to Harbor: "unauthorized" | The `HARBOR_USERNAME` / `HARBOR_PASSWORD` repository secrets in sample-app (robot account from runbook step 4; the name contains `$`, paste it exactly) |
+| Renovate pushes `renovate/...` branches but opens no PRs; the Dependency Dashboard lists them under **Errored** | The token lacks **Pull requests: Read and write** (pushing only needs Contents). Edit the `lab-renovate` token on GitHub — the value doesn't change, nothing to re-seal; the next run creates the PRs |
+| Harbor shows many "fixable" vulnerabilities in sample-app, package `stdlib` | The Go version the binary was built with is out of support. Renovate's `go` group (sample-app's renovate.json) bumps go.mod and the `golang` image together; merge it and the next build rescans clean |
 | Renovate job errors "Bad credentials" / no PRs | `kubectl -n renovate logs job/<name>`; the token lacks a permission (step 1 table) or expired. Repos without a `renovate.json` are skipped on purpose |
 | `argocd: command not found` | Run the admin tools playbook (Phase 3 runbook step 1) and open a new SSH session |
 
