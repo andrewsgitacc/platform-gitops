@@ -2,4 +2,4 @@ release: argocd
 namespace: argocd
 repo: https://argoproj.github.io/argo-helm
 chart: argo-cd
-version: 10.10.2   # Argo CD v3.5.4 (keep the argocd CLI in labs/admin at the same version)
+version: 10.14.0   # Argo CD v3.5.4 (keep the argocd CLI in labs/admin at the same version)
