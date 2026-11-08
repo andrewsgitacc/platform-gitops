@@ -73,11 +73,17 @@ create_robot() {
 seal_pipeline() {
   local token code robot robot_name robot_secret stage
   read -rsp "GitHub token lab-kargo (sample-app-deploy, Contents read/write): " token; echo
+  token=$(tr -d '[:space:]' <<<"$token")   # stray spaces/newlines from pasting
   [[ -n "$token" ]] || { echo "No token" >&2; exit 1; }
   # Check the token can write to the repo before sealing it.
   code=$(curl -s -o /tmp/kargo-repo.json -w '%{http_code}' -H "Authorization: Bearer $token" \
     https://api.github.com/repos/andrewsgitacc/sample-app-deploy)
-  [[ "$code" == 200 ]] || { echo "The token can't read andrewsgitacc/sample-app-deploy (HTTP $code)" >&2; exit 1; }
+  case "$code" in
+    200) ;;
+    401) echo "GitHub rejected the token (HTTP 401): not a valid token - check it was copied whole (starts github_pat_, ~93 characters)" >&2; exit 1 ;;
+    404) echo "The token can't see andrewsgitacc/sample-app-deploy (HTTP 404): add the repository to the token's Repository access" >&2; exit 1 ;;
+    *)   echo "The token can't read andrewsgitacc/sample-app-deploy (HTTP $code)" >&2; exit 1 ;;
+  esac
   [[ "$(jq -r '.permissions.push' /tmp/kargo-repo.json)" == true ]] \
     || { echo "The token can't write to sample-app-deploy (needs Contents: Read and write)" >&2; exit 1; }
   rm -f /tmp/kargo-repo.json
