@@ -1,0 +1,17 @@
+# Watches Harbor for new sample-app images. CI (sample-app's ci.yml) pushes every main
+# commit as :<short sha> (and :main, which is ignored here); the newest build becomes
+# new Freight. Harbor credentials: harbor-image-sealedsecret.yaml.
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata:
+  name: sample-app
+  namespace: sample-app
+spec:
+  interval: 2m
+  subscriptions:
+    - image:
+        repoURL: harbor.apps.lab.local/sample-app/sample-app
+        imageSelectionStrategy: NewestBuild
+        allowTagsRegexes:
+          - ^[0-9a-f]{7}$
+        discoveryLimit: 10

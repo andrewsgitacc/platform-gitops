@@ -21,7 +21,7 @@ data:
     sslRequired: external
 
     groups:
-      - name: platform-admins    # admin in Argo CD and Grafana
+      - name: platform-admins    # admin in Argo CD, Grafana, Harbor and Kargo
 
     users:
       - username: admin          # the platform's admin user (not Keycloak's master-realm admin)
@@ -83,6 +83,35 @@ data:
           - https://grafana.apps.lab.local
         attributes:
           post.logout.redirect.uris: https://grafana.apps.lab.local/login
+          pkce.code.challenge.method: S256
+        protocolMappers:
+          # Same groups mapper as argocd.
+          - name: groups
+            protocol: openid-connect
+            protocolMapper: oidc-group-membership-mapper
+            config:
+              claim.name: groups
+              full.path: "false"
+              id.token.claim: "true"
+              access.token.claim: "true"
+              userinfo.token.claim: "true"
+              introspection.token.claim: "true"
+
+      # Kargo (Phase 10). Public client: the Kargo UI logs in with PKCE, no client secret.
+      - clientId: kargo
+        name: Kargo
+        enabled: true
+        protocol: openid-connect
+        publicClient: true
+        standardFlowEnabled: true
+        directAccessGrantsEnabled: false
+        rootUrl: https://kargo.apps.lab.local
+        redirectUris:
+          - https://kargo.apps.lab.local/login
+        webOrigins:
+          - https://kargo.apps.lab.local
+        attributes:
+          post.logout.redirect.uris: https://kargo.apps.lab.local/*
           pkce.code.challenge.method: S256
         protocolMappers:
           # Same groups mapper as argocd.

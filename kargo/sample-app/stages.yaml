@@ -1,0 +1,60 @@
+# dev takes Freight straight from the Warehouse; staging only Freight that dev has run
+# healthily, prod only Freight that staging has. Auto-promotion: project.yaml.
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: dev
+  namespace: sample-app
+spec:
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: sample-app
+      sources:
+        direct: true
+  promotionTemplate:
+    spec:
+      steps:
+        - task:
+            name: promote
+          as: promote
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: staging
+  namespace: sample-app
+spec:
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: sample-app
+      sources:
+        stages:
+          - dev
+  promotionTemplate:
+    spec:
+      steps:
+        - task:
+            name: promote
+          as: promote
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: prod
+  namespace: sample-app
+spec:
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: sample-app
+      sources:
+        stages:
+          - staging
+  promotionTemplate:
+    spec:
+      steps:
+        - task:
+            name: promote
+          as: promote
