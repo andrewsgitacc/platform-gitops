@@ -1,0 +1,77 @@
+# Kargo (Phase 10). Values reference: https://github.com/akuity/kargo/blob/main/charts/kargo/values.yaml
+
+api:
+  host: kargo.apps.lab.local
+  # TLS ends at lab-gateway (wildcard certificate); the gateway talks plain HTTP to the API
+  # server. terminatedUpstream keeps Kargo's own URLs (OIDC callback, token issuer) https.
+  tls:
+    enabled: false
+    terminatedUpstream: true
+
+  # Admin password hash and token signing key come from the SealedSecret kargo-api
+  # (manifests/kargo-api-sealedsecret.yaml, scripts/seal-kargo-secrets.sh), not from Helm.
+  # The built-in admin stays enabled as a way in when Keycloak is down.
+  secret:
+    name: kargo-api
+
+  # Login with Keycloak (realm platform, public client "kargo" with PKCE - no client secret).
+  # Keycloak group platform-admins = Kargo admin.
+  oidc:
+    enabled: true
+    issuerURL: https://keycloak.apps.lab.local/realms/platform
+    clientID: kargo
+    admins:
+      claims:
+        groups:
+          - platform-admins
+
+  # The API server calls https://keycloak.apps.lab.local, signed by the lab CA: trust it
+  # (trust-manager's lab-ca-bundle ConfigMap = public CAs + the lab root CA).
+  cabundle:
+    configMapName: lab-ca-bundle
+
+  # "Open in Argo CD" links in the Kargo UI.
+  argocd:
+    urls:
+      "": https://argocd.apps.lab.local
+
+  # Projects are managed from Git (kargo/<project>/ in this repo), including their
+  # credentials as SealedSecrets, so the API doesn't need to manage Secrets.
+  secretManagementEnabled: false
+
+  # Argo Rollouts isn't installed (no verification analysis yet).
+  rollouts:
+    integrationEnabled: false
+
+  resources:
+    requests: {cpu: 20m, memory: 128Mi}
+
+controller:
+  # The controller reads images from https://harbor.apps.lab.local (lab CA) and GitHub
+  # (public CAs) - lab-ca-bundle has both.
+  cabundle:
+    configMapName: lab-ca-bundle
+  # Author of the promotion commits Kargo pushes.
+  gitClient:
+    name: Kargo
+    email: kargo@lab.local
+  rollouts:
+    integrationEnabled: false
+  resources:
+    requests: {cpu: 20m, memory: 256Mi}
+
+managementController:
+  resources:
+    requests: {cpu: 10m, memory: 64Mi}
+
+webhooksServer:
+  resources:
+    requests: {cpu: 10m, memory: 64Mi}
+
+externalWebhooksServer:
+  resources:
+    requests: {cpu: 10m, memory: 64Mi}
+
+garbageCollector:
+  resources:
+    requests: {cpu: 10m, memory: 64Mi}

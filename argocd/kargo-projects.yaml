@@ -1,0 +1,50 @@
+# One Argo CD Application per Kargo project: every folder kargo/<project>/ in this repo
+# (Project, Warehouse, Stages, credentials, the stages' Argo CD Applications) becomes an
+# Application named kargo-<project>.
+#
+# No CreateNamespace: Kargo creates the project's namespace itself from the Project
+# resource (it only adopts a namespace labelled kargo.akuity.io/project). Resources in it and the
+# Kargo CRDs may not exist on the first sync, hence SkipDryRunOnMissingResource + retry.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: kargo-projects
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: https://github.com/andrewsgitacc/platform-gitops.git
+        revision: main
+        directories:
+          - path: "kargo/*"
+  template:
+    metadata:
+      name: "kargo-{{ .path.basename }}"
+      namespace: argocd
+      labels:
+        platform.lab/type: kargo-project
+    spec:
+      project: platform
+      source:
+        repoURL: https://github.com/andrewsgitacc/platform-gitops.git
+        targetRevision: main
+        path: "{{ .path.path }}"
+        directory:
+          include: "*.yaml"
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{ .path.basename }}"
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - SkipDryRunOnMissingResource=true
+        retry:
+          limit: 10
+          backoff:
+            duration: 15s
+            factor: 2
+            maxDuration: 5m

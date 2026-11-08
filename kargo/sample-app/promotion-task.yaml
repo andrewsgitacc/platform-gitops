@@ -1,0 +1,56 @@
+# How every stage is promoted ("rendered branches" pattern):
+#  1. check out sample-app-deploy main (the source) and the branch stage/<stage> (output)
+#  2. set the Freight's image tag, render stages/<stage> with kustomize into the branch
+#  3. commit and push the branch - Git shows exactly what each stage runs
+#  4. sync the Argo CD Application sample-app-<stage> to that commit and wait for healthy
+# Git credentials: git-sample-app-deploy-sealedsecret.yaml.
+apiVersion: kargo.akuity.io/v1alpha1
+kind: PromotionTask
+metadata:
+  name: promote
+  namespace: sample-app
+spec:
+  vars:
+    - name: gitopsRepo
+      value: https://github.com/andrewsgitacc/sample-app-deploy.git
+    - name: imageRepo
+      value: harbor.apps.lab.local/sample-app/sample-app
+  steps:
+    - uses: git-clone
+      config:
+        repoURL: ${{ vars.gitopsRepo }}
+        checkout:
+          - branch: main
+            path: ./src
+          - branch: stage/${{ ctx.stage }}
+            create: true
+            path: ./out
+    - uses: git-clear
+      config:
+        path: ./out
+    - uses: kustomize-set-image
+      as: update
+      config:
+        path: ./src/base
+        images:
+          - image: ${{ vars.imageRepo }}
+            tag: ${{ imageFrom(vars.imageRepo).Tag }}
+    - uses: kustomize-build
+      config:
+        path: ./src/stages/${{ ctx.stage }}
+        outPath: ./out
+    - uses: git-commit
+      as: commit
+      config:
+        path: ./out
+        message: ${{ task.outputs.update.commitMessage }}
+    - uses: git-push
+      config:
+        path: ./out
+    - uses: argocd-update
+      config:
+        apps:
+          - name: sample-app-${{ ctx.stage }}
+            sources:
+              - repoURL: ${{ vars.gitopsRepo }}
+                desiredRevision: ${{ task.outputs.commit.commit }}

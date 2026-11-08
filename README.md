@@ -20,7 +20,9 @@ components/<name>/
   values.yaml      Helm values
   manifests/       Extra resources applied after the chart (pools, issuers, gateway...)
 apps/<name>/       Workloads that run on the platform (hello = Phase 2 test app)
-argocd/            Argo CD project + ApplicationSets: one Application per component and app
+kargo/<project>/   Kargo pipelines: Project, Warehouse, Stages, credentials, stage Applications
+argocd/            Argo CD project + ApplicationSets: one Application per component, app and
+                   Kargo project
 bootstrap/         root.yaml - the "app of apps", applied once by hand
 scripts/           Bootstrap helpers, run on the utility server (dns.lab.local)
 .github/workflows/ CI: render every chart and schema-check everything on each PR, using
@@ -51,14 +53,16 @@ scripts/           Bootstrap helpers, run on the utility server (dns.lab.local)
 | [ARC controller](components/arc-controller) | chart 0.15.1 | GitHub Actions Runner Controller: runs GitHub Actions jobs as pods in the cluster |
 | [ARC runners for sample-app](components/arc-sample-app) | chart 0.15.1 | Runner scale set `arc-sample-app` (`runs-on: arc-sample-app`): 0–2 ephemeral runner pods, each with a rootless BuildKit sidecar for image builds |
 | [Renovate](components/renovate) | chart 46.416.6 (Renovate 44.221.6) | Hourly CronJob opening update PRs for charts, images and actions, in repos with a `renovate.json` (this one: see [renovate.json](renovate.json)) |
+| [Kargo](components/kargo) | chart 1.12.5 | Promotes releases dev → staging → prod (pipelines in [kargo/](kargo)). https://kargo.apps.lab.local (Keycloak login) |
 
 How Argo CD deploys this repo:
 
 ```
 bootstrap/root.yaml  (applied once)
-  -> argocd/  project "platform" + 2 ApplicationSets
-       components -> one Application per components/<name>/  (chart + values.yaml + manifests/)
-       apps       -> one Application per apps/<name>/          (app-<name>, namespace <name>)
+  -> argocd/  project "platform" + 3 ApplicationSets
+       components     -> one Application per components/<name>/  (chart + values.yaml + manifests/)
+       apps           -> one Application per apps/<name>/          (app-<name>, namespace <name>)
+       kargo-projects -> one Application per kargo/<project>/      (kargo-<project>)
 ```
 
 To add a component: create `components/<name>/` with `chart.yaml`, `values.yaml` and
@@ -105,6 +109,12 @@ decrypts them, so they're safe in a public repo.
   (Renovate: opens PRs). They expire (a year at most): re-run the script with new tokens.
   The Harbor robot account sample-app's pipeline pushes with is stored as GitHub Actions
   secrets in that repository, not here.
+- **Kargo secrets** (Phase 10): `scripts/seal-kargo-secrets.sh` seals the built-in
+  `admin`'s password hash and token signing key (`components/kargo/manifests/kargo-api-sealedsecret.yaml`),
+  the fine-grained token `lab-kargo` Kargo pushes the `stage/*` branches with, and a
+  pull-only Harbor robot account (`robot$sample-app+kargo`) for the Warehouse and the
+  stages' image pull secrets (all in `kargo/sample-app/`). The token expires: re-run with
+  `--pipeline-only`.
 - **Lab-only plain passwords**: the Grafana `admin` and Keycloak master-realm `admin`
   logins are `admin` / `admin`, in plain text in the values (kept as ways in when SSO is
   broken). Never do this outside a lab.
@@ -130,6 +140,156 @@ There are two copies of this repo; don't mix them up:
 | Utility server (`ssh admin@172.16.79.10`) | `~/platform-gitops` | running `scripts/` and `kubectl`/`argocd`/`kubeseal` against the cluster |
 
 The utility server's copy is only ever updated with `git pull`; changes are made on the Mac.
+
+## Phase 10 runbook: Kargo
+
+**Kargo** (https://kargo.apps.lab.local) promotes releases through stages. For sample-app:
+every image CI pushes to Harbor becomes **Freight**; Kargo deploys it to **dev**
+automatically, and you press **Promote** to send Freight that dev ran healthily to
+**staging**, then from staging to **prod**.
+
+```
+sample-app CI ─► Harbor :<sha> ─► Warehouse ─► Freight ─► dev (auto) ─► staging ─► prod
+                                                           │             │           │
+          sample-app-deploy branches (rendered by Kargo):  stage/dev   stage/staging stage/prod
+                                                           │             │           │
+                         Argo CD Applications:     sample-app-dev  -staging     -prod
+```
+
+- The pipeline is in [kargo/sample-app/](kargo/sample-app): Project, Warehouse, Stages, the
+  promotion steps (PromotionTask), its credentials and the stages' Argo CD Applications.
+  The ApplicationSet `kargo-projects` turns each `kargo/<project>/` folder into an
+  Application `kargo-<project>`.
+- What gets deployed is in the repo [sample-app-deploy](https://github.com/andrewsgitacc/sample-app-deploy):
+  you edit `base/` and `stages/<stage>/` on `main`; Kargo renders a stage with the
+  promoted image tag and commits the result to the branch `stage/<stage>` ("rendered
+  branches"), so each stage's branch history is its deployment history.
+- Login: Keycloak (group `platform-admins` = Kargo admin), with Kargo's built-in `admin`
+  as a way in. Commands run on the **utility server** unless marked *Mac*/*GitHub*.
+
+### 1. A GitHub token for Kargo (*GitHub*)
+
+https://github.com/settings/personal-access-tokens → **Generate new token** (fine-grained):
+
+| Field | Value |
+|---|---|
+| Token name | `lab-kargo` |
+| Resource owner | `andrewsgitacc` |
+| Expiration | up to a year |
+| Repository access | **Only select repositories**: `sample-app-deploy`, `puppet-control-repo` (the second is for Phase 10b) |
+| Permissions → Repository permissions | **Contents: Read and write** (Metadata: Read-only is added automatically) |
+
+**Generate token** and copy it (shown once).
+
+### 2. sample-app-deploy (*Mac*)
+
+Push its `phase-10-kargo` branch, open the pull request, wait for the `validate` check,
+**merge** it. (Its `main` must have `base/` and `stages/` before the first promotion.)
+
+### 3. Seal Kargo's secrets (before merging this repo's PR)
+
+*Mac:* push this repo's `phase-10-kargo` branch and open the PR, **don't merge yet**. Then:
+
+```bash
+cd ~/platform-gitops && git fetch && git checkout phase-10-kargo && git pull
+./scripts/seal-kargo-secrets.sh
+git checkout main
+```
+
+It asks for a new password for Kargo's built-in `admin` (lab: anything simple), the
+`lab-kargo` token (it checks the token can write to sample-app-deploy) and Harbor's local
+`admin` password, with which it creates the pull-only robot account `robot$sample-app+kargo`.
+If it says the robot already exists (a re-run), delete it in Harbor → Projects →
+sample-app → Robot Accounts and run again. `--api-only` re-seals just the admin password,
+`--pipeline-only` just the token and robot.
+
+*Mac:* one `scp`, then the rest in a separate block:
+
+```bash
+cd ~/GitHub/platform-gitops && git checkout phase-10-kargo
+scp -r admin@172.16.79.10:kargo-sealed /tmp/
+```
+
+```bash
+cp /tmp/kargo-sealed/kargo-api-sealedsecret.yaml components/kargo/manifests/
+cp /tmp/kargo-sealed/git-*.yaml /tmp/kargo-sealed/harbor-*.yaml kargo/sample-app/
+rm -rf /tmp/kargo-sealed
+git add components/kargo/manifests kargo/sample-app && git status -s     # 6 new sealed files
+git commit -m "Phase 10: sealed Kargo secrets" && git push
+```
+
+**Merge only once the PR shows this commit** and CI is green.
+
+### 4. Check Kargo is up
+
+Argo CD creates `kargo` (the chart), `kargo-sample-app` (the pipeline) and updates
+`keycloak` (new client `kargo`):
+
+```bash
+watch kubectl -n argocd get applications kargo kargo-sample-app keycloak   # Synced + Healthy
+kubectl -n kargo get pods                       # kargo-api, -controller, -management-controller, -webhooks-server, -external-webhooks-server Running
+kubectl get projects.kargo.akuity.io            # sample-app
+kubectl -n sample-app get warehouse,stages      # dev, staging, prod
+```
+
+`kargo-sample-app` may retry for a minute while Kargo creates the `sample-app` namespace.
+The Applications `sample-app-staging` and `sample-app-prod` show an error until their first
+promotion (their branches don't exist yet) - expected.
+
+### 5. Freight and the first dev deployment
+
+Within ~2 minutes the Warehouse finds the newest sample-app image in Harbor:
+
+```bash
+kubectl -n sample-app get freight               # one Freight, alias like "frozen-tauntaun"
+kubectl -n sample-app get promotions -w         # dev promotion: Running -> Succeeded
+kubectl -n sample-app-dev get pods              # sample-app-... Running
+```
+
+*Mac:*
+```bash
+curl -k https://sample-app-dev.apps.lab.local    # {"app":"sample-app","environment":"dev","version":"<sha>"}
+```
+
+### 6. Log in (*Mac*)
+
+https://kargo.apps.lab.local → **SSO login** → Keycloak user `admin` (realm `platform`).
+(The built-in admin: **Admin login** with the password from step 3.) Open the project
+**sample-app**: Warehouse → Freight → the three stages, dev holding the Freight.
+
+### 7. Promote to staging and prod (*Mac*)
+
+In the UI, click the Freight's ⋯ → **Promote** → `staging` (or drag it onto the stage),
+then the same to `prod` once staging is healthy. Each promotion shows its steps; afterwards:
+
+```bash
+curl -k https://sample-app-staging.apps.lab.local; curl -k https://sample-app-prod.apps.lab.local
+```
+
+In sample-app-deploy on GitHub, the branches `stage/dev`, `stage/staging`, `stage/prod`
+each hold the rendered manifests with one commit by Kargo per promotion.
+
+### 8. The whole loop
+
+*Mac:* make a small change in sample-app (say the JSON response) on a branch, merge it.
+CI builds `:<new sha>` in the cluster and pushes it to Harbor; within ~2 minutes Kargo has
+new Freight and deploys it to dev on its own; staging and prod keep the old one until you
+promote. Rolling back = promoting the older Freight again.
+
+### 9. Memory
+
+```bash
+kubectl top nodes
+kubectl top pods -n kargo
+```
+
+### Phase 10 done when
+
+- [ ] `kargo`, `kargo-sample-app` Synced + Healthy; Keycloak login works in the Kargo UI
+- [ ] Freight from Harbor auto-promoted to dev; https://sample-app-dev.apps.lab.local answers
+- [ ] Promoted by hand to staging and prod; the `stage/*` branches show Kargo's commits
+- [ ] A new sample-app commit reaches dev without touching anything
+- [ ] Workers still have memory headroom
 
 ## Phase 9 runbook: CI
 

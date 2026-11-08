@@ -1,0 +1,24 @@
+# Kargo project for sample-app (Phase 10): new images from Harbor are promoted
+# dev -> staging -> prod. Kargo creates the namespace "sample-app" for the project.
+#
+#   Harbor image ─► Warehouse (Freight) ─► dev (auto) ─► staging (manual) ─► prod (manual)
+#
+# Each promotion renders sample-app-deploy's stages/<stage> with the new image tag,
+# commits it to the branch stage/<stage> of that repo and syncs the Argo CD Application
+# sample-app-<stage> (stage-apps.yaml), which deploys that branch.
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: sample-app
+---
+# Only dev takes new Freight automatically; staging and prod are promoted by hand.
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: sample-app
+  namespace: sample-app
+spec:
+  promotionPolicies:
+    - stageSelector:
+        name: dev
+      autoPromotionEnabled: true

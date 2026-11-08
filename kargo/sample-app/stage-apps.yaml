@@ -1,0 +1,81 @@
+# One namespace and one Argo CD Application per stage. Each Application deploys the
+# rendered branch stage/<stage> of sample-app-deploy, which only Kargo writes to.
+#
+# No automated sync: Kargo syncs the Application as the last step of every promotion
+# (argocd-update), which the annotation kargo.akuity.io/authorized-stage allows.
+# Until a stage's first promotion its branch doesn't exist, so the Application shows
+# an error (Unknown) - that's expected.
+#
+# The namespaces are created here (not by the Applications) because the Harbor pull
+# secrets (harbor-pull-*-sealedsecret.yaml) must exist before the first deploy.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sample-app-dev
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sample-app-staging
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sample-app-prod
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sample-app-dev
+  namespace: argocd
+  labels:
+    platform.lab/type: kargo-stage
+  annotations:
+    kargo.akuity.io/authorized-stage: sample-app:dev
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/andrewsgitacc/sample-app-deploy.git
+    targetRevision: stage/dev
+    path: .
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: sample-app-dev
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sample-app-staging
+  namespace: argocd
+  labels:
+    platform.lab/type: kargo-stage
+  annotations:
+    kargo.akuity.io/authorized-stage: sample-app:staging
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/andrewsgitacc/sample-app-deploy.git
+    targetRevision: stage/staging
+    path: .
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: sample-app-staging
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sample-app-prod
+  namespace: argocd
+  labels:
+    platform.lab/type: kargo-stage
+  annotations:
+    kargo.akuity.io/authorized-stage: sample-app:prod
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/andrewsgitacc/sample-app-deploy.git
+    targetRevision: stage/prod
+    path: .
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: sample-app-prod
