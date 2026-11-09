@@ -1,0 +1,24 @@
+# Kargo project for the Puppet control repo (Phase 10b): commits merged to its main branch
+# are promoted development -> staging -> production. Kargo creates the namespace "puppet".
+#
+#   main commit ─► Warehouse (Freight) ─► development (auto) ─► staging ─► production
+#
+# Each promotion copies the Freight's commit of main into the branch of the same name as
+# the stage; r10k on puppet.lab.local deploys every branch as a Puppet environment, and
+# all nodes run production (labs/puppet).
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: puppet
+---
+# Only development takes new Freight automatically.
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: puppet
+  namespace: puppet
+spec:
+  promotionPolicies:
+    - stageSelector:
+        name: development
+      autoPromotionEnabled: true

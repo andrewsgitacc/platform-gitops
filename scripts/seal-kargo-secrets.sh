@@ -4,6 +4,7 @@
 #   ./scripts/seal-kargo-secrets.sh                  everything below
 #   ./scripts/seal-kargo-secrets.sh --api-only       only kargo-api (new admin password)
 #   ./scripts/seal-kargo-secrets.sh --pipeline-only  only the sample-app pipeline's secrets
+#   ./scripts/seal-kargo-secrets.sh --puppet-only    only the Puppet project's Git token
 #
 # Writes SealedSecrets to ~/kargo-sealed/:
 #
@@ -18,6 +19,9 @@
 #       sample-app-<stage>/harbor-pull: lets each stage's pods pull them.
 #     Both Harbor secrets use one pull-only robot account, robot$sample-app+kargo, which
 #     this script creates in Harbor (asks for Harbor's local admin password).
+#   git-puppet-control-repo-sealedsecret.yaml -> kargo/puppet/
+#       puppet/git-puppet-control-repo: lets Kargo push the environment branches
+#         (development, staging, production) of puppet-control-repo. Same token lab-kargo.
 #
 # Only this cluster can decrypt the files, so they're safe in the public repo.
 set -euo pipefail
@@ -27,8 +31,10 @@ OUT="$HOME/kargo-sealed"
 HARBOR=harbor.apps.lab.local
 IMAGE_REPO="$HARBOR/sample-app/sample-app"
 DEPLOY_REPO=https://github.com/andrewsgitacc/sample-app-deploy.git
+PUPPET_REPO=https://github.com/andrewsgitacc/puppet-control-repo.git
+TOKEN=""
 
-usage() { sed -n '4,6p' "$0" | sed 's/^# *//'; exit 1; }
+usage() { sed -n '4,7p' "$0" | sed 's/^# *//'; exit 1; }
 
 header() {
   echo "# $1, encrypted with Sealed Secrets."
@@ -70,24 +76,34 @@ create_robot() {
   esac
 }
 
-seal_pipeline() {
-  local token code robot robot_name robot_secret stage
-  read -rsp "GitHub token lab-kargo (sample-app-deploy, Contents read/write): " token; echo
-  token=$(tr -d '[:space:]' <<<"$token")   # stray spaces/newlines from pasting
-  [[ -n "$token" ]] || { echo "No token" >&2; exit 1; }
-  # Check the token can write to the repo before sealing it.
-  code=$(curl -s -o /tmp/kargo-repo.json -w '%{http_code}' -H "Authorization: Bearer $token" \
-    https://api.github.com/repos/andrewsgitacc/sample-app-deploy)
+# Asks for the lab-kargo token once (stray spaces/newlines from pasting are removed).
+read_token() {
+  [[ -n "$TOKEN" ]] && return
+  read -rsp "GitHub token lab-kargo (sample-app-deploy + puppet-control-repo, Contents read/write): " TOKEN; echo
+  TOKEN=$(tr -d '[:space:]' <<<"$TOKEN")
+  [[ -n "$TOKEN" ]] || { echo "No token" >&2; exit 1; }
+}
+
+# check_token <repo>: the token can push to andrewsgitacc/<repo>, or the script stops.
+check_token() {
+  local repo=$1 code push
+  read_token
+  code=$(curl -s -o /tmp/kargo-repo.json -w '%{http_code}' -H "Authorization: Bearer $TOKEN" \
+    "https://api.github.com/repos/andrewsgitacc/$repo")
   case "$code" in
     200) ;;
     401) echo "GitHub rejected the token (HTTP 401): not a valid token - check it was copied whole (starts github_pat_, ~93 characters)" >&2; exit 1 ;;
-    404) echo "The token can't see andrewsgitacc/sample-app-deploy (HTTP 404): add the repository to the token's Repository access" >&2; exit 1 ;;
-    *)   echo "The token can't read andrewsgitacc/sample-app-deploy (HTTP $code)" >&2; exit 1 ;;
+    404) echo "The token can't see andrewsgitacc/$repo (HTTP 404): add the repository to the token's Repository access" >&2; exit 1 ;;
+    *)   echo "The token can't read andrewsgitacc/$repo (HTTP $code)" >&2; exit 1 ;;
   esac
-  [[ "$(jq -r '.permissions.push' /tmp/kargo-repo.json)" == true ]] \
-    || { echo "The token can't write to sample-app-deploy (needs Contents: Read and write)" >&2; exit 1; }
-  rm -f /tmp/kargo-repo.json
-  echo "The token can write to sample-app-deploy."
+  push=$(jq -r '.permissions.push' /tmp/kargo-repo.json); rm -f /tmp/kargo-repo.json
+  [[ "$push" == true ]] || { echo "The token can't write to $repo (needs Contents: Read and write)" >&2; exit 1; }
+  echo "The token can write to $repo."
+}
+
+seal_pipeline() {
+  local robot robot_name robot_secret stage
+  check_token sample-app-deploy
 
   robot=$(create_robot)
   robot_name=${robot%% *}; robot_secret=${robot#* }
@@ -100,7 +116,7 @@ seal_pipeline() {
     kubectl create secret generic git-sample-app-deploy --namespace sample-app \
       --from-literal=repoURL="$DEPLOY_REPO" \
       --from-literal=username=kargo \
-      --from-literal=password="$token" \
+      --from-literal=password="$TOKEN" \
       --dry-run=client -o yaml \
       | kubectl label --local -f - kargo.akuity.io/cred-type=git -o yaml \
       | kubeseal --format yaml
@@ -127,17 +143,33 @@ seal_pipeline() {
   done
 }
 
+seal_puppet() {
+  check_token puppet-control-repo
+  {
+    header "Kargo's GitHub token for puppet-control-repo"
+    kubectl create secret generic git-puppet-control-repo --namespace puppet \
+      --from-literal=repoURL="$PUPPET_REPO" \
+      --from-literal=username=kargo \
+      --from-literal=password="$TOKEN" \
+      --dry-run=client -o yaml \
+      | kubectl label --local -f - kargo.akuity.io/cred-type=git -o yaml \
+      | kubeseal --format yaml
+  } > "$OUT/git-puppet-control-repo-sealedsecret.yaml"
+}
+
 mode=all
 case "${1:-}" in
   "") ;;
   --api-only) mode=api ;;
   --pipeline-only) mode=pipeline ;;
+  --puppet-only) mode=puppet ;;
   *) usage ;;
 esac
 
 mkdir -p "$OUT"
-[[ "$mode" == pipeline ]] || seal_api
-[[ "$mode" == api ]] || seal_pipeline
+[[ "$mode" == all || "$mode" == api ]] && seal_api
+[[ "$mode" == all || "$mode" == pipeline ]] && seal_pipeline
+[[ "$mode" == all || "$mode" == puppet ]] && seal_puppet
 ls -l "$OUT"
 
 cat <<'MSG'
@@ -147,7 +179,8 @@ Next, on the Mac (on your branch), one scp for all files:
   scp -r admin@172.16.79.10:kargo-sealed /tmp/
 then, in a separate block:
   cp /tmp/kargo-sealed/kargo-api-sealedsecret.yaml components/kargo/manifests/ 2>/dev/null || true
-  cp /tmp/kargo-sealed/git-*.yaml /tmp/kargo-sealed/harbor-*.yaml kargo/sample-app/ 2>/dev/null || true
+  cp /tmp/kargo-sealed/git-sample-app-deploy-*.yaml /tmp/kargo-sealed/harbor-*.yaml kargo/sample-app/ 2>/dev/null || true
+  cp /tmp/kargo-sealed/git-puppet-control-repo-*.yaml kargo/puppet/ 2>/dev/null || true
   rm -rf /tmp/kargo-sealed
   git status
 and commit and push - merge only once the pull request shows that commit.

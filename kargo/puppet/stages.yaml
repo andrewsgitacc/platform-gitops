@@ -1,0 +1,61 @@
+# development takes Freight straight from the Warehouse; staging only Freight that
+# development has, production only Freight that staging has. No verification: the
+# environments are checked with `puppet agent -t --noop --environment <stage>`.
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: development
+  namespace: puppet
+spec:
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: puppet-control-repo
+      sources:
+        direct: true
+  promotionTemplate:
+    spec:
+      steps:
+        - task:
+            name: promote
+          as: promote
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: staging
+  namespace: puppet
+spec:
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: puppet-control-repo
+      sources:
+        stages:
+          - development
+  promotionTemplate:
+    spec:
+      steps:
+        - task:
+            name: promote
+          as: promote
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: production
+  namespace: puppet
+spec:
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: puppet-control-repo
+      sources:
+        stages:
+          - staging
+  promotionTemplate:
+    spec:
+      steps:
+        - task:
+            name: promote
+          as: promote

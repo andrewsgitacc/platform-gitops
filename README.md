@@ -53,7 +53,7 @@ scripts/           Bootstrap helpers, run on the utility server (dns.lab.local)
 | [ARC controller](components/arc-controller) | chart 0.15.1 | GitHub Actions Runner Controller: runs GitHub Actions jobs as pods in the cluster |
 | [ARC runners for sample-app](components/arc-sample-app) | chart 0.15.1 | Runner scale set `arc-sample-app` (`runs-on: arc-sample-app`): 0–2 ephemeral runner pods, each with a rootless BuildKit sidecar for image builds |
 | [Renovate](components/renovate) | chart 46.416.6 (Renovate 44.221.6) | Hourly CronJob opening update PRs for charts, images and actions, in repos with a `renovate.json` (this one: see [renovate.json](renovate.json)) |
-| [Kargo](components/kargo) | chart 1.12.5 | Promotes releases dev → staging → prod (pipelines in [kargo/](kargo)). https://kargo.apps.lab.local (Keycloak login) |
+| [Kargo](components/kargo) | chart 1.12.5 | Promotes releases dev → staging → prod: sample-app and the Puppet control repo (pipelines in [kargo/](kargo)). https://kargo.apps.lab.local (Keycloak login) |
 
 How Argo CD deploys this repo:
 
@@ -111,7 +111,8 @@ decrypts them, so they're safe in a public repo.
   secrets in that repository, not here.
 - **Kargo secrets** (Phase 10): `scripts/seal-kargo-secrets.sh` seals the built-in
   `admin`'s password hash and token signing key (`components/kargo/manifests/kargo-api-sealedsecret.yaml`),
-  the fine-grained token `lab-kargo` Kargo pushes the `stage/*` branches with, and a
+  the fine-grained token `lab-kargo` Kargo pushes the `stage/*` branches (and, sealed again
+  into `kargo/puppet/`, the control repo's environment branches) with, and a
   pull-only Harbor robot account (`robot$sample-app+kargo`) for the Warehouse and the
   stages' image pull secrets (all in `kargo/sample-app/`). The token expires: re-run with
   `--pipeline-only`.
@@ -140,6 +141,163 @@ There are two copies of this repo; don't mix them up:
 | Utility server (`ssh admin@172.16.79.10`) | `~/platform-gitops` | running `scripts/` and `kubectl`/`argocd`/`kubeseal` against the cluster |
 
 The utility server's copy is only ever updated with `git pull`; changes are made on the Mac.
+
+## Phase 10b runbook: Kargo for Puppet code
+
+The second Kargo project, **puppet**, promotes the
+[Puppet control repo](https://github.com/andrewsgitacc/puppet-control-repo) (labs/puppet):
+
+```
+PR ─(CI validate)─► main ─► Warehouse ─► Freight ─► development (auto) ─► staging ─► production
+                                                       │                    │            │
+                         control-repo branches:   development           staging     production
+                                                       └──── r10k on puppet.lab.local ───┘
+                                                                         │
+                                            all nodes run production ◄───┘ (agents every 10 min)
+```
+
+- Pipeline in [kargo/puppet/](kargo/puppet): Warehouse on `main`'s commits, a PromotionTask
+  that copies the Freight's commit (minus `.github/`) into the branch named like the stage,
+  three Stages. No Argo CD and nothing deployed in the cluster: the Puppet server pulls.
+- You merge into `main` only through pull requests with the **validate** check green (a
+  branch rule enforces it), so Kargo only ever sees checked commits.
+- The Puppet VMs (8 GB) must be running to see the result on the nodes; Kargo itself
+  only needs GitHub.
+
+Commands run on the **utility server** unless marked *Mac*/*GitHub*.
+
+### 1. Puppet VMs and the control repo's `main` (*Mac*, *GitHub*)
+
+```bash
+for n in puppet puppet-client-01 puppet-client-02; do
+  "/Applications/VMware Fusion.app/Contents/Public/vmrun" start "$HOME/Virtual Machines.localized/$n.vmwarevm/$n.vmx" nogui
+done
+cd ~/GitHub/puppet-control-repo && git checkout production && git pull && git push origin production:main
+```
+
+*GitHub:* puppet-control-repo → **Settings** → **General** → *Default branch* → the ⇄
+button → choose `main` → **Update** → **I understand, update the default branch**.
+
+### 2. CI on the control repo (*Mac*, *GitHub*)
+
+```bash
+cd ~/GitHub/puppet-control-repo && git checkout phase-10b-kargo && git push -u origin phase-10b-kargo
+```
+
+*GitHub:* open the pull request with **base: `main`** (not production). It adds
+`.github/workflows/validate.yml` + `Gemfile` (the old Jenkinsfile checks, now on
+GitHub-hosted runners) and removes the Jenkinsfile. Wait for **validate** to go green, merge.
+
+### 3. Only green pull requests into `main` (*GitHub*)
+
+puppet-control-repo → **Settings** → **Rules** → **Rulesets** → **New ruleset** →
+**New branch ruleset**:
+
+| Field | Value |
+|---|---|
+| Ruleset name | `main` |
+| Enforcement status | **Active** |
+| Bypass list | empty |
+| Target branches | **Add target** → **Include default branch** |
+| Restrict deletions | ✓ |
+| Require a pull request before merging | ✓ (Required approvals: 0 - you're the only reviewer) |
+| Require status checks to pass | ✓ → **Add checks** → type `validate` → pick it |
+| Block force pushes | ✓ |
+
+**Create**. Pushing straight to `main` is now refused; the environment branches aren't
+covered, so Kargo can push them.
+
+### 4. r10k skips `main` (*Mac*, labs repo)
+
+`main` mustn't become a Puppet environment of its own:
+
+```bash
+cd ~/GitHub/labs && git checkout phase-10b-kargo && git push -u origin phase-10b-kargo
+cd puppet && ansible-playbook -i puppet_inventory.ini 02_install_puppet_server.yml -k -K && cd ..
+```
+
+### 5. Seal the token and merge
+
+The `lab-kargo` token from Phase 10a already covers puppet-control-repo. *Mac:* push this
+repo's `phase-10b-kargo` branch, open the PR, **don't merge yet**. Then:
+
+```bash
+cd ~/platform-gitops && git fetch && git checkout phase-10b-kargo && git pull
+./scripts/seal-kargo-secrets.sh --puppet-only
+git checkout main && git pull
+```
+
+*Mac:* one `scp`, then a separate block:
+
+```bash
+cd ~/GitHub/platform-gitops && git checkout phase-10b-kargo
+scp -r admin@172.16.79.10:kargo-sealed /tmp/
+```
+
+```bash
+cp /tmp/kargo-sealed/git-puppet-control-repo-sealedsecret.yaml kargo/puppet/
+rm -rf /tmp/kargo-sealed
+git add kargo/puppet && git status -s          # 1 new file
+git commit -m "Phase 10b: sealed Kargo token for puppet-control-repo" && git push
+```
+
+**Merge once the PR shows this commit** and CI is green. Then:
+
+```bash
+kubectl -n argocd get application kargo-puppet     # Synced + Healthy (may retry for a minute)
+kubectl -n puppet get warehouse,freight,stages
+kubectl -n puppet get promotions                   # development: Succeeded
+```
+
+*GitHub:* puppet-control-repo now has a branch `development` with Kargo's commit
+"Promote main@<sha> to development".
+
+### 6. development and staging: preview
+
+```bash
+ssh -t admin@172.16.79.70 "sudo systemctl start r10k-deploy.service; ls /etc/puppetlabs/code/environments"
+# development  production
+ssh -t admin@172.16.79.71 "sudo /opt/puppetlabs/bin/puppet agent -t --noop --environment development"
+```
+
+The `--noop` run compiles the client's catalog from `development` and reports what it
+would change, without changing anything (none, while it's the same code as production).
+
+*Mac:* Kargo UI → project **puppet** → promote the Freight to **staging**, deploy r10k again;
+`staging` appears in the environments list.
+
+### 7. production
+
+*Mac:* promote it to **production**. Kargo's commit replaces the branch's content with
+`main`'s (the first time it's identical to what was there, so maybe no new commit). Then:
+
+```bash
+ssh -t admin@172.16.79.70 "sudo systemctl start r10k-deploy.service"
+ssh -t admin@172.16.79.71 "sudo /opt/puppetlabs/bin/puppet agent -t"     # no errors
+```
+
+### 8. The whole loop
+
+*Mac:* in the control repo, branch from `main`, change `profile::base::motd_message` in
+`data/common.yaml`, open a PR, merge once green. Within ~2 minutes Kargo promotes it to
+`development` by itself. Preview it:
+
+```bash
+ssh -t admin@172.16.79.70 "sudo systemctl start r10k-deploy.service"
+ssh -t admin@172.16.79.72 "sudo /opt/puppetlabs/bin/puppet agent -t --noop --environment development"   # /etc/motd would change
+ssh -t admin@172.16.79.72 "cat /etc/motd"                                                              # still the old message
+```
+
+Promote it to staging, then production in the UI; deploy r10k; run the agent on client-02;
+`/etc/motd` now has the new message. Rolling back = promoting the previous Freight to
+production again.
+
+### Phase 10b done when
+
+- [ ] `main` is the default branch; only green PRs merge into it; validate runs on PRs
+- [ ] `kargo-puppet` Synced; Freight from `main`, development promoted by itself
+- [ ] r10k deploys development, staging, production (not main)
+- [ ] A MOTD change reaches the nodes only after promotion to production
 
 ## Phase 10 runbook: Kargo
 

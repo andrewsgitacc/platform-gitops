@@ -1,0 +1,46 @@
+# How every stage is promoted:
+#  1. check out the Freight's commit of main (source) and the branch named like the stage
+#  2. replace the branch's content with the commit's, minus .github/ (CI only runs on main,
+#     and pushing workflow files would need an extra token permission)
+#  3. commit and push - r10k deploys the branch as the environment of the same name
+# Nothing to sync in the cluster: Puppet agents pull from the Puppet server.
+# Git credentials: git-puppet-control-repo-sealedsecret.yaml.
+apiVersion: kargo.akuity.io/v1alpha1
+kind: PromotionTask
+metadata:
+  name: promote
+  namespace: puppet
+spec:
+  vars:
+    - name: repo
+      value: https://github.com/andrewsgitacc/puppet-control-repo.git
+  steps:
+    - uses: git-clone
+      config:
+        repoURL: ${{ vars.repo }}
+        checkout:
+          - commit: ${{ commitFrom(vars.repo).ID }}
+            path: ./src
+          - branch: ${{ ctx.stage }}
+            create: true
+            path: ./out
+    - uses: git-clear
+      config:
+        path: ./out
+    - uses: copy
+      config:
+        inPath: ./src
+        outPath: ./out
+        ignore: |
+          .github
+    - uses: git-commit
+      as: commit
+      config:
+        path: ./out
+        message: |-
+          Promote main@${{ commitFrom(vars.repo).ID }} to ${{ ctx.stage }}
+
+          ${{ commitFrom(vars.repo).Message }}
+    - uses: git-push
+      config:
+        path: ./out
