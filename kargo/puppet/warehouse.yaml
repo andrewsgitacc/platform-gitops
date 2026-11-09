@@ -1,0 +1,15 @@
+# Watches the control repo's main branch: every new commit (merged PR, CI green) becomes
+# Freight. The repo is public, so discovery needs no credentials.
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata:
+  name: puppet-control-repo
+  namespace: puppet
+spec:
+  interval: 2m
+  subscriptions:
+    - git:
+        repoURL: https://github.com/andrewsgitacc/puppet-control-repo.git
+        branch: main
+        commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 10
