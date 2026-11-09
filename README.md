@@ -261,10 +261,24 @@ ssh -t admin@172.16.79.71 "sudo /opt/puppetlabs/bin/puppet agent -t --noop --env
 ```
 
 The `--noop` run compiles the client's catalog from `development` and reports what it
-would change, without changing anything (none, while it's the same code as production).
+would change, without changing anything. With the same code as production it still shows
+`/etc/motd` and `/etc/puppet-managed` changing: both print the environment's name.
 
 *Mac:* Kargo UI → project **puppet** → promote the Freight to **staging**, deploy r10k again;
-`staging` appears in the environments list.
+`staging` appears in the environments list. Without the UI, a promotion is just a resource:
+
+```bash
+cat <<EOF | kubectl create -f -
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Promotion
+metadata:
+  generateName: staging-
+  namespace: puppet
+spec:
+  stage: staging
+  freight: <Freight name from: kubectl -n puppet get freight>
+EOF
+```
 
 ### 7. production
 
@@ -298,6 +312,23 @@ production again.
 - [ ] `kargo-puppet` Synced; Freight from `main`, development promoted by itself
 - [ ] r10k deploys development, staging, production (not main)
 - [ ] A MOTD change reaches the nodes only after promotion to production
+
+Lessons from the build: the `puppet` VM turned out to be the **bare template** (no
+OpenVox, no static IP, hostname `localhost`) — playbook 01 had never finished for it, and it
+went unnoticed while the Puppet VMs were off; the Puppet lab was rebuilt with playbooks
+01–03, which now also set each hostname themselves (Puppet names certificates after it);
+a mistyped `-k` password makes every host "UNREACHABLE … Permission denied" at the first
+SSH task; the noop preview of `development` shows `/etc/motd` and `/etc/puppet-managed`
+changing even with identical code, because both print the environment name; after a merge
+to `main`, Freight appears within one Warehouse interval (2 minutes) — a refresh annotation
+checks at once (Troubleshooting); a change reaches the nodes only in the order
+**promote → r10k deploy → agent run**: running the agent before promoting correctly changed
+nothing; merged feature branches stay environments (`phase_10b_kargo`) until the branch is
+deleted; every lab VM shares the template's SSH host key (clones keep it). CI with
+puppet-lint 5 passed the existing code first time.
+
+Measured: nothing new in the cluster (the Kargo project is a few resources); the three
+Puppet VMs add **8 GB** on the Mac (58 GB of VMs with the cluster running).
 
 ## Phase 10 runbook: Kargo
 
@@ -1425,6 +1456,10 @@ kubectl apply -f apps/hello/hello.yaml                 # put it back
 | Kargo Warehouse finds no Freight | `kubectl -n sample-app get warehouse sample-app -o json \| jq .status.conditions` — Harbor credentials (`harbor-image` secret, robot `robot$sample-app+kargo`) or no tag matching `^[0-9a-f]{7}$` |
 | Kargo promotion fails at `git-push` | The `lab-kargo` token expired or lacks Contents: Read and write on sample-app-deploy: `./scripts/seal-kargo-secrets.sh --pipeline-only` (delete the Harbor robot first) |
 | `sample-app-<stage>` Application in error / Unknown | Normal until the stage's first promotion: its branch `stage/<stage>` doesn't exist yet |
+| Puppet change merged to `main` isn't on the nodes | Promote it to `production` first (Kargo), then `sudo systemctl start r10k-deploy.service` on puppet.lab.local, then the agent. `git log origin/production` in the control repo shows what's promoted |
+| No new Puppet Freight after a merge | Wait one Warehouse interval (2 min) or refresh: `kubectl -n puppet annotate warehouse puppet-control-repo kargo.akuity.io/refresh="$(date +%s)" --overwrite`; conditions: `kubectl -n puppet get warehouse puppet-control-repo -o json \| jq .status.conditions` |
+| Kargo promotion to a Puppet environment fails at `git-push` | Token expired or lacks Contents: Read and write on puppet-control-repo: `./scripts/seal-kargo-secrets.sh --puppet-only`. Pushing `.github/workflows` would need Workflows permission - the PromotionTask's copy step ignores `.github` |
+| Old feature-branch environments on the Puppet server | r10k deploys every branch except `main`: delete merged branches on GitHub |
 
 ### Pods Evicted / DiskPressure
 
