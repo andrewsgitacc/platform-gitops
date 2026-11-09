@@ -48,7 +48,7 @@ scripts/           Bootstrap helpers, run on the utility server (dns.lab.local)
 | [Argo CD](components/argocd) | chart 10.10.2 (v3.5.4) | GitOps: deploys this repo, including itself. UI at https://argocd.apps.lab.local (Keycloak login) |
 | [trust-manager](components/trust-manager) | v0.26.0 | Copies the lab CA (plus the public CAs) into a ConfigMap `lab-ca-bundle` in every namespace, so pods can trust `https://*.apps.lab.local` |
 | [CloudNativePG](components/cloudnative-pg) | chart 0.29.1 (operator 1.30.1) | PostgreSQL operator; databases are `Cluster` resources next to the app that uses them |
-| [Keycloak](components/keycloak) | keycloakx chart 7.4.0 (Keycloak 26.8.1) | Single sign-on for Argo CD and Grafana. https://keycloak.apps.lab.local (admin console: admin / admin, lab only). Realm `platform` as code, applied by keycloak-config-cli |
+| [Keycloak](components/keycloak) | keycloakx chart 7.4.0 (Keycloak 26.8.1) | Single sign-on for Argo CD, Grafana, Harbor and Kargo. https://keycloak.apps.lab.local (admin console: admin / admin, lab only). Realm `platform` as code, applied by keycloak-config-cli |
 | [Harbor](components/harbor) | chart 1.19.4, images v2.16.0-rc1 | Container registry with Trivy scanning. https://harbor.apps.lab.local (Keycloak login). Database from CloudNativePG, images in the Ceph S3 bucket `harbor-registry`. First arm64 release is 2.16, hence the release candidate |
 | [ARC controller](components/arc-controller) | chart 0.15.1 | GitHub Actions Runner Controller: runs GitHub Actions jobs as pods in the cluster |
 | [ARC runners for sample-app](components/arc-sample-app) | chart 0.15.1 | Runner scale set `arc-sample-app` (`runs-on: arc-sample-app`): 0–2 ephemeral runner pods, each with a rootless BuildKit sidecar for image builds |
@@ -282,6 +282,22 @@ promote. Rolling back = promoting the older Freight again.
 kubectl top nodes
 kubectl top pods -n kargo
 ```
+
+Lessons from the build: the first dev pod failed with **CreateContainerConfigError** — the
+distroless image's `USER nonroot` is a name, and the kubelet can't prove a name isn't root
+under `runAsNonRoot`; fixed with `runAsUser/runAsGroup: 65532` in the Deployment (and
+`USER 65532:65532` in sample-app's Dockerfile); a fix merged to sample-app-deploy `main`
+only reaches a stage at its **next promotion**, and Kargo renders whatever `main` holds at
+that moment — promote *after* the merge (a promotion with nothing new to commit succeeds
+but changes nothing); re-promoting the same Freight is how a config-only change is rolled
+out; `kargo-sample-app` showed only some resources for the first minute while Kargo created
+the project namespace, then synced by itself; the seal script's first token check got
+HTTP 401 from a bad paste (it now trims whitespace and explains 401/404); the full loop —
+merge in sample-app → CI in the cluster → Harbor → new Freight → dev — needed no clicks,
+while staging and prod stayed on the previous release.
+
+Measured after Phase 10a (idle): all five Kargo pods together ~130 MB; workers 4.5–6.7 GB
+each (48–70%, ~16.6 GiB in total), control planes 58–62%.
 
 ### Phase 10 done when
 
@@ -1246,6 +1262,11 @@ kubectl apply -f apps/hello/hello.yaml                 # put it back
 | Harbor shows many "fixable" vulnerabilities in sample-app, package `stdlib` | The Go version the binary was built with is out of support. Renovate's `go` group (sample-app's renovate.json) bumps go.mod and the `golang` image together; merge it and the next build rescans clean |
 | Renovate job errors "Bad credentials" / no PRs | `kubectl -n renovate logs job/<name>`; the token lacks a permission (step 1 table) or expired. Repos without a `renovate.json` are skipped on purpose |
 | `argocd: command not found` | Run the admin tools playbook (Phase 3 runbook step 1) and open a new SSH session |
+| Kargo stage pod `CreateContainerConfigError`: "image has non-numeric user (nonroot), cannot verify user is non-root" | The pod has `runAsNonRoot` but the image's USER is a name: set `runAsUser`/`runAsGroup: 65532` (sample-app-deploy `base/deployment.yaml`), merge, then promote the Freight to the stage again |
+| A change merged to sample-app-deploy doesn't appear in a stage | Stages only change when promoted: promote the stage's current Freight again (Kargo UI → stage → Promote). Check what it runs: `git log origin/stage/<stage>` |
+| Kargo Warehouse finds no Freight | `kubectl -n sample-app get warehouse sample-app -o json \| jq .status.conditions` — Harbor credentials (`harbor-image` secret, robot `robot$sample-app+kargo`) or no tag matching `^[0-9a-f]{7}$` |
+| Kargo promotion fails at `git-push` | The `lab-kargo` token expired or lacks Contents: Read and write on sample-app-deploy: `./scripts/seal-kargo-secrets.sh --pipeline-only` (delete the Harbor robot first) |
+| `sample-app-<stage>` Application in error / Unknown | Normal until the stage's first promotion: its branch `stage/<stage>` doesn't exist yet |
 
 ### Pods Evicted / DiskPressure
 
